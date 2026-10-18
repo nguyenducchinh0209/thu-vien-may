@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -25,12 +27,12 @@ class AuthController extends Controller
             'password.confirmed' => 'Mật khẩu nhập lại chưa khớp.',
         ]);
 
-        $user = \App\Models\User::create([
+        $user = DB::transaction(fn () => User::create([
             'name' => $validated['name'],
             'email' => mb_strtolower($validated['email']),
             'password' => $validated['password'],
             'role' => 'Độc giả',
-        ]);
+        ]));
 
         Auth::login($user);
         $request->session()->regenerate();
@@ -73,7 +75,7 @@ class AuthController extends Controller
         return response()->json(['message' => 'Bạn đã đăng xuất.']);
     }
 
-    private function userPayload(\App\Models\User $user): array
+    private function userPayload(User $user): array
     {
         return $user->only(['id', 'name', 'email', 'role']);
     }
