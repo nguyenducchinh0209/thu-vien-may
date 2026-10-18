@@ -1,0 +1,13 @@
+# Local Apache access: redirect the project URL to Laravel's public directory.
+# Requests to application source, configuration and storage are not served here.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_URI} ^(.*/)$
+    RewriteRule ^$ %1public/ [R=302,L]
+    RewriteRule ^public(?:/|$) - [L]
+    RewriteRule ^ - [F,L]
+</IfModule>
+
+<IfModule !mod_rewrite.c>
+    Require all denied
+</IfModule>
