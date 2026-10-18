@@ -63,10 +63,14 @@ class LibraryFoundationTest extends TestCase
         Book::create(['book_code' => 'BK000001', 'title' => 'Duplicate']);
     }
 
-    public function test_reader_with_profile_cannot_be_hard_deleted(): void
+    public function test_reader_is_soft_deleted_to_preserve_profile_history(): void
     {
         $this->seed();
-        $this->expectException(QueryException::class);
-        User::where('email', 'minhanh@example.com')->firstOrFail()->delete();
+        $reader = User::where('email', 'minhanh@example.com')->firstOrFail();
+        $profileId = $reader->readerProfile->id;
+        $reader->delete();
+
+        $this->assertSoftDeleted('users', ['id' => $reader->id]);
+        $this->assertDatabaseHas('reader_profiles', ['id' => $profileId, 'user_id' => $reader->id]);
     }
 }

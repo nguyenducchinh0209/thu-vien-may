@@ -66,7 +66,7 @@ Repeated seeding preserves existing accounts, passwords and catalog records. Dem
 
 ## Database and models
 
-- User: existing login fields, name and role. Existing role values remain Admin, Thủ thư and Độc giả for compatibility.
+- User: existing login fields, name and role. Existing role values remain Admin, Thủ thư and Độc giả for compatibility. Reader accounts are soft-deleted so future loan history remains linked.
 - ReaderProfile: one per reader, unique user_id and reader_code, optional phone, address, date_of_birth and avatar_path. The full name remains in users.name to avoid duplicate data.
 - Author: name, optional biography; soft deletion.
 - Book: unique book_code, title, optional unique ISBN, description, publisher, publication_year, edition and cover_image_path; total_quantity and rental_fee in VND; soft deletion.
@@ -90,8 +90,25 @@ erDiagram
 
 ## Scope
 
-This foundation contains accounts, reader profiles, authors, books and sample data. Existing authentication and frontend are retained. Catalog CRUD/API and the frontend catalog are not connected to these new tables yet.
-Loans, partial returns, reservations, payments and fines are a later stage. Do not treat total_quantity as live availability after lending is implemented; availability must subtract active loans and reserved copies.
+This foundation contains accounts, reader profiles, authors, books and sample data. Existing authentication and frontend are retained. Staff-only JSON CRUD endpoints are available for books, authors and readers under `/staff`; the frontend catalog and staff screens still need to be connected to them.
+
+Staff catalog and reader endpoints require authentication and the `Admin` or `Thủ thư` role. All list endpoints support `q` search and pagination using `page` and `per_page` (maximum 50):
+
+- Books: `/staff/books` — search title, code, ISBN, publisher or author; create/update accepts `author_ids` and an optional `cover_image` upload.
+- Authors: `/staff/authors` — search by name; deleting an author is soft deletion and preserves its book links.
+- Readers: `/staff/readers` — search name, email, reader code or phone; create requires a confirmed password and always assigns the `Độc giả` role. Optional avatar uploads use the `avatar` field. Deleting a reader is soft deletion; profile and future history are retained.
+- Loans: `/staff/loans` — staff issue a 14-day loan to a reader with one or more book quantities. `POST /staff/loans/{id}/returns` records full or partial returns and keeps each return event in history.
+- Inventory: `GET /staff/inventory` — lists total, currently-on-loan and available copy counts. Availability subtracts copies that have not yet been returned on active loans.
+- Public catalog: `GET /catalog/books` and `GET /catalog/books/{id}` — public search/details with author and rating summary.
+- Reader loan history: `GET /my/loans` — a reader's loans, return history and current overdue indicator.
+- Reader cart: `/my/cart` and `/my/cart/items` support listing, adding, updating and removing items. `POST /my/cart/reservations` submits all cart items as queued reservations atomically and clears the cart only on success.
+- Reservations: readers use `POST /reservations`, `GET /my/reservations` and `DELETE /reservations/{id}`. Staff use `/staff/reservations`; approve with `POST /staff/reservations/{id}/ready`, then issue the loan with `POST /staff/reservations/{id}/fulfill`. Requests are queued FIFO per title; an approved quantity is held for 3 days.
+- Fines: `GET /my/fines` for readers; staff list via `GET /staff/fines`. A late return creates an unpaid fine at 1,000 VND per returned copy per late calendar day. Admins may waive an unpaid fine with a reason. Payment capture/history is intentionally left for the payment integration.
+- Reviews and comments: `GET /books/{id}/reviews`, `GET /books/{id}/comments`; signed-in readers can post, edit or delete their own review and post/delete their own comments. Ratings publish immediately and one review per reader per book is allowed.
+- Book suggestions: readers use `POST /book-suggestions` and `GET /my/book-suggestions`; staff list at `/staff/book-suggestions` and update status to `approved`, `rejected` or `ordered`.
+
+For browser access to uploaded book covers and reader avatars, run `php artisan storage:link` once per local setup.
+The scheduled `reservations:expire` command marks ready holds past their 3-day pickup window as expired. Run Laravel's scheduler in deployment (for local testing, `php artisan schedule:work`). Current inventory subtracts both outstanding copies on active loans and non-expired ready reservations from `total_quantity`.
 
 ## Verification
 
