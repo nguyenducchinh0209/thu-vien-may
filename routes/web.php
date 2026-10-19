@@ -27,6 +27,9 @@ Route::get('/books/{book}/reviews', [ReviewController::class, 'index'])->name('b
 Route::get('/books/{book}/comments', [BookCommentController::class, 'index'])->name('books.comments.index');
 Route::post('/auth/register', [AuthController::class, 'register'])->middleware('throttle:5,1')->name('auth.register');
 Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:8,1')->name('auth.login');
+Route::post('/auth/forgot-password', [AuthController::class, 'sendPasswordResetLink'])->middleware('throttle:5,1')->name('auth.password.email');
+Route::get('/password/reset/{token}', fn (string $token) => view('auth.reset-password', ['token' => $token, 'email' => request('email')]))->name('password.reset');
+Route::post('/password/reset', [AuthController::class, 'resetPassword'])->middleware('throttle:5,1')->name('password.update');
 Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('auth')->name('auth.logout');
 Route::get('/auth/session', fn () => response()->json([
     'user' => request()->user()?->only(['id', 'name', 'email', 'role']),

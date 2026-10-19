@@ -32,6 +32,9 @@ class StoreLoanRequest extends FormRequest
                 Rule::exists('books', 'id')->whereNull('deleted_at'),
             ],
             'items.*.quantity' => ['required', 'integer', 'min:1'],
+            'rental_fee_payment.amount' => ['required', 'numeric', 'min:0', 'max:9999999999.99', 'decimal:0,2'],
+            'rental_fee_payment.method' => ['required', 'string', Rule::in(['cash', 'bank_transfer', 'manual'])],
+            'rental_fee_payment.receipt_note' => ['nullable', 'string', 'max:500'],
         ];
     }
 }

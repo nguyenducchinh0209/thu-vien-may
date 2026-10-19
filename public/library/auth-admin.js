@@ -3,7 +3,7 @@ const authPageLabels = {login:'Đăng nhập',register:'Tạo tài khoản',forg
 Object.assign(labels, authPageLabels, {'librarian-home':'Bàn làm việc thủ thư'});
 
 let authSession=window.libraryUser||null;
-const authServerData={cartItems:[],reservations:[],loans:[],fines:[],reviews:[],comments:[],profile:null};
+const authServerData={cartItems:[],reservations:[],loans:[],fines:[],reviews:[],comments:[],profile:null,favoriteBooks:[]};
 const authBootEmail=authSession?.email||null;
 let authActiveEmail=null;
 if(authSession){state.name=authSession.name;state.role=authSession.role;state.email=authSession.email||'minhanh@example.com';}
@@ -50,7 +50,8 @@ async function authRefreshReaderData(){
     authServerData.loans=loans.data||[];
     authServerData.fines=(fines.data||[]).map(row=>({id:row.id,reason:`Trễ hạn ${row.overdue_days} ngày`,created:row.created_at,amount:row.amount,status:row.status==='unpaid'?'Chưa thanh toán':row.status}));
     authServerData.profile=profile.profile||null;
-    const items=authServerData.loans.flatMap(loan=>(loan.items||[]).map(item=>({id:item.id,loanId:loan.id,bookId:item.book_id,due:loan.due_at?new Date(loan.due_at).toLocaleDateString('vi-VN'):'—',status:loan.status==='active'?'Đang mượn':'Đã trả',tone:loan.status==='active'?'':'done'})));
+    authServerData.favoriteBooks=await Promise.all(state.favorites.map(async id=>{try{return authNormalizeBook((await authRequest(`/catalog/books/${id}`)).book);}catch{return null;}}));
+    const items=authServerData.loans.flatMap(loan=>(loan.items||[]).map(item=>({id:item.id,loanId:loan.id,bookId:item.book_id,book:item.book,due:loan.due_at?new Date(loan.due_at).toLocaleDateString('vi-VN'):'—',status:loan.status==='active'?'Đang mượn':'Đã trả',tone:loan.status==='active'?'':'done'})));
     loanItems.splice(0,loanItems.length,...items);
     saveStore('may-cart',state.cart);syncCounts();if(['cart','shelf','reservations','fines'].includes(state.page))render();
   }catch(error){console.error('Không tải được dữ liệu độc giả:',error);}
@@ -74,7 +75,30 @@ async function authRefreshStaffData(){
   }catch(error){console.error('Không tải được dữ liệu nhân viên:',error);}
 }
 async function authRefreshAppData(){await authRefreshCatalog();await Promise.all([authRefreshReaderData(),authRefreshStaffData()]);}
-function authShowLoanForm(){showModal(`<form id="api-loan-form" class="login-form"><h2 id="modal-title">Lập phiếu mượn</h2><label class="field">Độc giả<select name="reader_id" required>${opData.readers.map(reader=>`<option value="${reader.id}">${authEscape(reader.name)} · ${authEscape(reader.email)}</option>`).join('')}</select></label><label class="field">Sách<select name="book_id" required>${state.adminBooks.map(book=>`<option value="${book.id}">${authEscape(book.title)} · ${authEscape(book.book_code)}</option>`).join('')}</select></label><label class="field">Số lượng<input name="quantity" type="number" min="1" value="1" required></label><button class="primary-button" type="submit">Tạo phiếu</button></form>`);}
+function authShowLoanForm(){
+  const readers=opData.readers.map(reader=>`<option value="${reader.id}">${authEscape(reader.name)} · ${authEscape(reader.email)}</option>`).join('');
+  let loanOptionBooks=[...state.adminBooks];
+  const options=loanOptionBooks.map(book=>`<option value="${book.id}" data-fee="${Number(book.rental_fee)||0}">${authEscape(book.title)} · ${authEscape(book.book_code)}</option>`).join('');
+  showModal(`<form id="api-loan-form" class="login-form"><h2 id="modal-title">Lập phiếu mượn</h2><label class="field">Độc giả<select name="reader_id" required>${readers}</select></label><label class="field">Tìm sách<input type="search" id="loan-book-search" placeholder="Nhập tên hoặc mã sách"></label><div id="loan-book-rows"><div class="loan-book-row"><label class="field">Sách<select name="book_id" required>${options}</select></label><label class="field">Số lượng<input name="quantity" type="number" min="1" value="1" required></label></div></div><button type="button" class="secondary-button" data-loan-add-book>+ Thêm đầu sách</button><label class="field">Phí đã thu<input name="amount" type="number" min="0" step="0.01" required></label><label class="field">Hình thức<select name="method"><option value="cash">Tiền mặt</option><option value="bank_transfer">Chuyển khoản</option><option value="manual">Khác</option></select></label><label class="field">Ghi chú biên nhận<input name="receipt_note" maxlength="500"></label><p class="modal-note">Xác nhận đã thu đủ phí mượn trước khi giao sách.</p><button class="primary-button" type="submit">Xác nhận thu và giao sách</button></form>`);
+  const form=document.getElementById('api-loan-form');
+  const addRow=()=>{const row=document.createElement('div');row.className='loan-book-row';row.innerHTML=`<label class="field">Sách<select name="book_id" required>${options}</select></label><label class="field">Số lượng<input name="quantity" type="number" min="1" value="1" required></label><button type="button" class="secondary-button" data-loan-remove-book>Xóa sách</button>`;document.getElementById('loan-book-rows').append(row);updateTotal();};
+  form.querySelector('[data-loan-add-book]').addEventListener('click',addRow);
+  form.addEventListener('click',event=>{if(event.target.closest('[data-loan-remove-book]')){event.target.closest('.loan-book-row').remove();updateTotal();}});
+  const updateTotal=()=>{let cents=0;form.querySelectorAll('.loan-book-row').forEach(row=>{const option=row.querySelector('select').selectedOptions[0];cents+=Math.round(Number(option?.dataset.fee||0)*100)*Number(row.querySelector('[name=quantity]').value||0);});form.elements.amount.value=(cents/100).toFixed(2);};
+  form.addEventListener('change',event=>{if(event.target.matches('select[name=book_id],input[name=quantity]'))updateTotal();});
+  updateTotal();
+  let searchTimer;
+  document.getElementById('loan-book-search').addEventListener('input',event=>{clearTimeout(searchTimer);searchTimer=setTimeout(async()=>{const query=event.target.value.trim();if(query.length<2)return;try{const result=await authRequest(`/catalog/books?q=${encodeURIComponent(query)}&per_page=50`);const found=(result.data||[]).map(authNormalizeBook);const selected=[...form.querySelectorAll('select[name=book_id]')].map(select=>select.value);found.forEach(book=>{if(!loanOptionBooks.some(existing=>existing.id===book.id))loanOptionBooks.push(book);});form.querySelectorAll('select[name=book_id]').forEach((select,index)=>{const choices=[...found];const selectedBook=loanOptionBooks.find(book=>String(book.id)===selected[index]);if(selectedBook&&!choices.some(book=>String(book.id)===selected[index]))choices.unshift(selectedBook);select.innerHTML=choices.map(book=>`<option value="${book.id}" data-fee="${Number(book.rental_fee)||0}">${authEscape(book.title)} · ${authEscape(book.book_code)}</option>`).join('');if(selected[index])select.value=selected[index];});updateTotal();}catch(error){toast(error.message);}},250);});
+}
+async function authShowReservationFulfill(id){
+  const reservation=opData.reservations.find(item=>Number(item.id)===Number(id));
+  if(!reservation)return;
+  try{
+    const book=authNormalizeBook((await authRequest(`/catalog/books/${reservation.book_id}`)).book);
+    const amount=(Number(book.rental_fee)||0)*Number(reservation.quantity||0);
+    showModal(`<form id="api-reservation-fulfill-form" class="login-form" data-reservation-id="${reservation.id}"><h2 id="modal-title">Xác nhận thu phí và giao sách</h2><p>${authEscape(reservation.reader)} · ${authEscape(book.title)} × ${reservation.quantity}</p><label class="field">Phí đã thu<input name="amount" type="number" min="0" step="0.01" value="${amount.toFixed(2)}" required></label><label class="field">Hình thức<select name="method"><option value="cash">Tiền mặt</option><option value="bank_transfer">Chuyển khoản</option><option value="manual">Khác</option></select></label><label class="field">Ghi chú biên nhận<input name="receipt_note" maxlength="500"></label><p class="modal-note">Xác nhận đã thu đủ phí mượn trước khi giao sách.</p><button class="primary-button" type="submit">Xác nhận thu và giao sách</button></form>`);
+  }catch(error){toast(error.message||'Không thể tải thông tin sách.');}
+}
 function authShowLoanReturn(loanId){const loan=opData.loans.find(item=>String(item.id)===String(loanId));if(!loan)return;showModal(`<form id="api-return-form" class="login-form" data-loan-id="${loan.id}"><h2 id="modal-title">Ghi nhận trả sách</h2><p>${authEscape(loan.reader)} · ${authEscape(loan.book)}</p>${loan.items.filter(item=>item.quantity>item.returned_quantity).map(item=>`<label class="field">${authEscape(item.book?.title||'Sách')} · còn ${item.quantity-item.returned_quantity}<input name="item-${item.id}" type="number" min="0" max="${item.quantity-item.returned_quantity}" value="0"></label>`).join('')}<button class="primary-button" type="submit">Xác nhận trả</button></form>`);}
 function authShowAccountForm(id){const old=opData.accounts.find(item=>String(item.id)===String(id));showModal(`<form id="api-account-form" class="login-form" data-account-id="${old?.id||''}"><h2 id="modal-title">${old?'Cập nhật tài khoản':'Tạo tài khoản'}</h2><label class="field">Họ tên<input name="name" value="${authEscape(old?.name||'')}" required minlength="2"></label><label class="field">Email<input name="email" type="email" value="${authEscape(old?.email||'')}" required></label><label class="field">Mật khẩu<input name="password" type="password" ${old?'':'required minlength="8"'}></label><label class="field">Vai trò<select name="role"><option ${old?.role==='Độc giả'?'selected':''}>Độc giả</option><option ${old?.role==='Thủ thư'?'selected':''}>Thủ thư</option><option ${old?.role==='Admin'?'selected':''}>Admin</option></select></label><label class="field">Trạng thái<select name="is_locked"><option value="0" ${!old||old.status==='Hoạt động'?'selected':''}>Hoạt động</option><option value="1" ${old?.status==='Tạm khóa'?'selected':''}>Tạm khóa</option></select></label><button class="primary-button" type="submit">Lưu tài khoản</button></form>`);}
 function authShowStaffEntityForm(key,id){const old=(opData[key]||[]).find(item=>String(item.id)===String(id));if(key==='authors')showModal(`<form id="api-author-form" class="login-form" data-entity-id="${old?.id||''}"><h2 id="modal-title">${old?'Cập nhật tác giả':'Thêm tác giả'}</h2><label class="field">Tên tác giả<input name="name" value="${authEscape(old?.name||'')}" required></label><label class="field">Tiểu sử<textarea name="biography">${authEscape(old?.country==='—'?'':old?.country||'')}</textarea></label><button class="primary-button" type="submit">Lưu tác giả</button></form>`);else showModal(`<form id="api-reader-form" class="login-form" data-entity-id="${old?.id||''}"><h2 id="modal-title">${old?'Cập nhật độc giả':'Thêm độc giả'}</h2><label class="field">Họ tên<input name="name" value="${authEscape(old?.name||'')}" required minlength="2"></label><label class="field">Email<input name="email" type="email" value="${authEscape(old?.email||'')}" required></label>${old?'':'<label class="field">Mật khẩu ban đầu<input name="password" type="password" minlength="8" required></label><label class="field">Nhập lại mật khẩu<input name="password_confirmation" type="password" minlength="8" required></label>'}<label class="field">Số điện thoại<input name="phone" value="${authEscape(old?.phone||'')}"></label><button class="primary-button" type="submit">Lưu độc giả</button></form>`);}
@@ -323,8 +347,16 @@ document.addEventListener('submit',async event=>{
   }
   if(event.target.id==='api-loan-form'){
     event.preventDefault();event.stopImmediatePropagation();const values=new FormData(event.target);
-    try{await authRequest('/staff/loans',{method:'POST',body:{reader_id:Number(values.get('reader_id')),items:[{book_id:Number(values.get('book_id')),quantity:Number(values.get('quantity'))}]}});closeModal();await authRefreshStaffData();await authRefreshCatalog();toast('Đã tạo phiếu mượn trên máy chủ.');}
+    const quantities=new Map();for(const row of event.target.querySelectorAll('.loan-book-row')){const bookId=Number(row.querySelector('[name=book_id]').value),quantity=Number(row.querySelector('[name=quantity]').value)||0;quantities.set(bookId,(quantities.get(bookId)||0)+quantity);}
+    const items=[...quantities].map(([book_id,quantity])=>({book_id,quantity}));
+    try{await authRequest('/staff/loans',{method:'POST',body:{reader_id:Number(values.get('reader_id')),items,rental_fee_payment:{amount:values.get('amount'),method:values.get('method'),receipt_note:values.get('receipt_note')}}});closeModal();await authRefreshStaffData();await authRefreshCatalog();toast('Đã xác nhận thu phí và giao sách.');}
     catch(error){toast(error.message||'Không thể lập phiếu mượn.');}
+    return;
+  }
+  if(event.target.id==='api-reservation-fulfill-form'){
+    event.preventDefault();event.stopImmediatePropagation();const values=new FormData(event.target),id=event.target.dataset.reservationId;
+    try{await authRequest(`/staff/reservations/${id}/fulfill`,{method:'POST',body:{rental_fee_payment:{amount:values.get('amount'),method:values.get('method'),receipt_note:values.get('receipt_note')}}});closeModal();await authRefreshStaffData();await authRefreshCatalog();toast('Đã xác nhận thu phí và giao sách.');}
+    catch(error){toast(error.message||'Không thể giao sách.');}
     return;
   }
   if(event.target.id==='api-return-form'){
@@ -364,7 +396,7 @@ document.addEventListener('submit',async event=>{
   const form=event.target,mode=form.dataset.authMode,values=new FormData(form),email=String(values.get('email')||'').trim().toLowerCase();
   const setError=(name,message)=>{const node=form.querySelector(`[data-error-for="${name}"]`);if(node)node.textContent=message;};
   form.querySelectorAll('.auth-error').forEach(node=>node.textContent='');
-  if(mode==='forgot'){if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){setError('email','Vui lòng nhập email hợp lệ.');return;}toast('Chức năng khôi phục mật khẩu sẽ được kết nối sau.');return;}
+  if(mode==='forgot'){if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){setError('email','Vui lòng nhập email hợp lệ.');return;}try{const result=await authRequest('/auth/forgot-password',{method:'POST',body:{email}});toast(result.message||'Nếu email đã được đăng ký, hướng dẫn sẽ được gửi.');}catch(error){setError('email',error.message||'Không thể gửi hướng dẫn lúc này.');}return;}
   const password=String(values.get('password')||'');
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){setError('email','Vui lòng nhập email hợp lệ.');return;}
   if(password.length<8){setError('password','Mật khẩu cần có ít nhất 8 ký tự.');return;}
@@ -423,8 +455,8 @@ document.addEventListener('click',event=>{
   const editStaffEntity=event.target.closest('[data-op-edit^="authors:"],[data-op-edit^="readers:"]');if(editStaffEntity){event.preventDefault();event.stopImmediatePropagation();const [key,id]=editStaffEntity.dataset.opEdit.split(':');authShowStaffEntityForm(key,id);return;}
   const deleteStaffEntity=event.target.closest('[data-op-delete^="authors:"],[data-op-delete^="readers:"]');if(deleteStaffEntity){event.preventDefault();event.stopImmediatePropagation();const [key,id]=deleteStaffEntity.dataset.opDelete.split(':');if(confirm('Xóa mềm bản ghi này trên máy chủ?'))authRequest(`/staff/${key}/${id}`,{method:'DELETE'}).then(()=>authRefreshStaffData()).then(()=>toast('Đã xóa mềm bản ghi.')).catch(error=>toast(error.message));return;}
   const deleteAccount=event.target.closest('[data-op-delete^="accounts:"]');if(deleteAccount){event.preventDefault();event.stopImmediatePropagation();toast('Tài khoản được khóa thay vì xóa để giữ lịch sử giao dịch.');return;}
-  const readyReservation=event.target.closest('[data-op-approve]');if(readyReservation){event.preventDefault();event.stopImmediatePropagation();authRequest(`/staff/reservations/${readyReservation.dataset.opApprove}/ready`,{method:'POST',body:{}}).then(()=>authRefreshStaffData()).then(()=>authRefreshCatalog()).then(()=>toast('Đã duyệt và giữ sách trong 3 ngày.')).catch(error=>toast(error.message));return;}
-  const fulfillReservation=event.target.closest('[data-op-fulfill]');if(fulfillReservation){event.preventDefault();event.stopImmediatePropagation();authRequest(`/staff/reservations/${fulfillReservation.dataset.opFulfill}/fulfill`,{method:'POST',body:{}}).then(()=>authRefreshStaffData()).then(()=>authRefreshCatalog()).then(()=>toast('Đã tạo phiếu mượn từ yêu cầu.')).catch(error=>toast(error.message));return;}
+  const readyReservation=event.target.closest('[data-op-approve]');if(readyReservation){event.preventDefault();event.stopImmediatePropagation();authRequest(`/staff/reservations/${readyReservation.dataset.opApprove}/ready`,{method:'POST',body:{}}).then(()=>authRefreshStaffData()).then(()=>authRefreshCatalog()).then(()=>toast('Đã duyệt và giữ sách trong 48 giờ.')).catch(error=>toast(error.message));return;}
+  const fulfillReservation=event.target.closest('[data-op-fulfill]');if(fulfillReservation){event.preventDefault();event.stopImmediatePropagation();authShowReservationFulfill(fulfillReservation.dataset.opFulfill);return;}
   const returnLoan=event.target.closest('[data-op-return]');if(returnLoan){event.preventDefault();event.stopImmediatePropagation();authShowLoanReturn(returnLoan.dataset.opReturn);return;}
   const payFine=event.target.closest('[data-op-pay]');if(payFine){event.preventDefault();event.stopImmediatePropagation();authShowFinePayment(payFine.dataset.opPay);return;}
   const activeAuthForm=event.target.closest('#auth-form');
@@ -451,7 +483,11 @@ document.addEventListener('click',event=>{
   }
 },true);
 
-document.addEventListener('click',event=>{if(event.target.closest('[data-add-cart],[data-remove-cart],[data-favorite]'))authPersistAccountData();});
+document.addEventListener('click',event=>{
+  const favorite=event.target.closest('[data-favorite]');
+  if(favorite){const id=Number(favorite.dataset.favorite);if(state.favorites.includes(id)){const book=state.adminBooks.find(item=>Number(item.id)===id);if(book&&!authServerData.favoriteBooks.some(item=>Number(item?.id)===id))authServerData.favoriteBooks.push(book);}else{authServerData.favoriteBooks=authServerData.favoriteBooks.filter(item=>Number(item?.id)!==id);}}
+  if(event.target.closest('[data-add-cart],[data-remove-cart],[data-favorite]'))authPersistAccountData();
+});
 document.addEventListener('change',event=>{if(event.target.id==='avatar-file'){const file=event.target.files?.[0];if(file){const preview=document.getElementById('avatar-preview');if(preview){preview.src=URL.createObjectURL(file);preview.hidden=false;}}}},true);
 
 document.addEventListener('input',event=>{if(event.target.closest('#auth-form')){const error=event.target.closest('.field')?.querySelector('.auth-error');if(error)error.textContent='';}const counterId=event.target.dataset.countFor;if(counterId){const counter=document.getElementById(counterId);if(counter)counter.textContent=event.target.value.length;const error=event.target.closest('form')?.querySelector('.community-error');if(error)error.textContent='';}});

@@ -14,17 +14,17 @@ use Illuminate\Validation\ValidationException;
 
 class LoanIssuanceService
 {
-    public function issueReservation(User $staff, int $reservationId): Loan
+    public function issueReservation(User $staff, int $reservationId, array $payment): Loan
     {
-        return $this->issue($staff, 0, [], $reservationId);
+        return $this->issue($staff, 0, [], $payment, $reservationId);
     }
 
     /**
      * @param  array<int, array{book_id: int, quantity: int}>  $items
      */
-    public function issue(User $staff, int $readerId, array $items, ?int $reservationId = null): Loan
+    public function issue(User $staff, int $readerId, array $items, array $payment, ?int $reservationId = null): Loan
     {
-        return DB::transaction(function () use ($staff, $readerId, $items, $reservationId): Loan {
+        return DB::transaction(function () use ($staff, $readerId, $items, $payment, $reservationId): Loan {
             $reservation = null;
             if ($reservationId !== null) {
                 $reservationBookId = Reservation::query()->whereKey($reservationId)->value('book_id');
@@ -83,6 +83,18 @@ class LoanIssuanceService
                 }
             }
 
+            $totalCents = 0;
+            foreach ($items as $item) {
+                $book = $books->get((int) $item['book_id']);
+                $totalCents += (int) round((float) $book->rental_fee * 100) * (int) $item['quantity'];
+            }
+            $receivedCents = (int) round((float) $payment['amount'] * 100);
+            if ($receivedCents !== $totalCents) {
+                throw ValidationException::withMessages([
+                    'rental_fee_payment.amount' => 'Số tiền đã thu phải bằng tổng phí mượn do máy chủ tính.',
+                ]);
+            }
+
             $issuedAt = now();
             $loan = Loan::create([
                 'reader_id' => $readerId,
@@ -90,6 +102,12 @@ class LoanIssuanceService
                 'issued_at' => $issuedAt,
                 'due_at' => $issuedAt->copy()->addDays(14),
                 'status' => 'active',
+                'rental_fee_total' => number_format($totalCents / 100, 2, '.', ''),
+                'rental_fee_received' => number_format($receivedCents / 100, 2, '.', ''),
+                'rental_fee_received_at' => $issuedAt,
+                'rental_fee_received_by' => $staff->id,
+                'rental_fee_payment_method' => $payment['method'],
+                'rental_fee_receipt_note' => $payment['receipt_note'] ?? null,
             ]);
 
             foreach ($items as $item) {

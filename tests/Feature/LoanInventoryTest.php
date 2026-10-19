@@ -45,6 +45,7 @@ class LoanInventoryTest extends TestCase
                     ['book_id' => $book->id, 'quantity' => 2],
                     ['book_id' => $secondBook->id, 'quantity' => 1],
                 ],
+                'rental_fee_payment' => ['amount' => '12500.00', 'method' => 'cash'],
             ])
             ->assertCreated()
             ->assertJsonPath('loan.status', 'active')
@@ -52,8 +53,11 @@ class LoanInventoryTest extends TestCase
 
         $loan = Loan::with('items')->firstOrFail();
         $this->assertSame('2026-11-01 10:00:00', $loan->due_at->format('Y-m-d H:i:s'));
+        $this->actingAs($reader)->getJson('/my/loans')
+            ->assertOk()
+            ->assertJsonPath('data.0.items.0.book.title', 'Loan Test Book');
 
-        $this->getJson('/staff/inventory?q=Loan Test Book')
+        $this->actingAs($staff)->getJson('/staff/inventory?q=Loan Test Book')
             ->assertOk()
             ->assertJsonPath('data.0.total_quantity', 3)
             ->assertJsonPath('data.0.on_loan_quantity', 2)
@@ -111,6 +115,7 @@ class LoanInventoryTest extends TestCase
         $this->postJson('/staff/loans', [
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 2]],
+            'rental_fee_payment' => ['amount' => '10000.00', 'method' => 'cash'],
         ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('items.0.quantity');
@@ -118,6 +123,7 @@ class LoanInventoryTest extends TestCase
         $this->postJson('/staff/loans', [
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 1]],
+            'rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash'],
         ])->assertCreated();
 
         $loan = Loan::with('items')->firstOrFail();
@@ -129,6 +135,35 @@ class LoanInventoryTest extends TestCase
 
         $this->assertDatabaseCount('loan_returns', 0);
         $this->assertDatabaseHas('loan_items', ['id' => $loan->items[0]->id, 'returned_quantity' => 0]);
+    }
+
+    public function test_rental_fee_must_be_collected_at_the_server_calculated_total_before_issuance(): void
+    {
+        $staff = User::factory()->create(['role' => 'Admin']);
+        $reader = User::factory()->create(['role' => 'Độc giả']);
+        $book = Book::create([
+            'book_code' => 'BK200004',
+            'title' => 'Fee Check Book',
+            'total_quantity' => 2,
+            'rental_fee' => 1250.50,
+        ]);
+
+        $this->actingAs($staff)->postJson('/staff/loans', [
+            'reader_id' => $reader->id,
+            'items' => [['book_id' => $book->id, 'quantity' => 2]],
+            'rental_fee_payment' => ['amount' => '2500.00', 'method' => 'cash', 'receipt_note' => 'Cash desk receipt'],
+        ])->assertUnprocessable()->assertJsonValidationErrors('rental_fee_payment.amount');
+
+        $this->assertDatabaseCount('loans', 0);
+        $this->postJson('/staff/loans', [
+            'reader_id' => $reader->id,
+            'items' => [['book_id' => $book->id, 'quantity' => 2]],
+            'rental_fee_payment' => ['amount' => '2501.00', 'method' => 'cash', 'receipt_note' => 'Cash desk receipt'],
+        ])->assertCreated()->assertJsonPath('loan.rental_fee_total', '2501.00')
+            ->assertJsonPath('loan.rental_fee_received', '2501.00')
+            ->assertJsonPath('loan.rental_fee_payment_method', 'cash')
+            ->assertJsonPath('loan.rental_fee_receipt_note', 'Cash desk receipt')
+            ->assertJsonPath('loan.rental_fee_received_by', $staff->id);
     }
 
     public function test_readers_cannot_issue_or_return_books(): void

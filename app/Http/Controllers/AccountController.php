@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -35,7 +36,7 @@ class AccountController extends Controller
             'is_locked' => ['sometimes', 'boolean'],
         ]);
         $data['email'] = mb_strtolower($data['email']);
-        $account = User::create($data);
+        $account = DB::transaction(fn () => User::create($data));
 
         return response()->json(['message' => 'Đã tạo tài khoản.', 'account' => $account], 201);
     }
@@ -58,7 +59,19 @@ class AccountController extends Controller
         if (array_key_exists('password', $data) && $data['password'] === null) {
             unset($data['password']);
         }
-        DB::transaction(fn () => $account->update($data));
+        DB::transaction(function () use ($account, $data): void {
+            if (isset($data['password'])) {
+                $data['remember_token'] = Str::random(60);
+                $data['auth_version'] = $account->auth_version + 1;
+            }
+
+            $account->update($data);
+            if (($data['role'] ?? $account->role) === 'Độc giả' && ! $account->readerProfile()->exists()) {
+                $profile = $account->readerProfile()->make();
+                $profile->reader_code = 'RD'.str_pad((string) $account->id, 6, '0', STR_PAD_LEFT);
+                $profile->save();
+            }
+        });
 
         return response()->json(['message' => 'Đã cập nhật tài khoản.', 'account' => $account->fresh()]);
     }

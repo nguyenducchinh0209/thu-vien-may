@@ -57,7 +57,7 @@ class LoanController extends Controller
     public function mine(Request $request): JsonResponse
     {
         $loans = Loan::query()
-            ->with(['issuer:id,name', 'items.book:id,title,book_code', 'returns.items.loanItem.book:id,title,book_code'])
+            ->with(['issuer:id,name', 'items.book:id,title,book_code,cover_image_path,rental_fee', 'items.book.authors:id,name', 'returns.items.loanItem.book:id,title,book_code'])
             ->where('reader_id', $request->user()->id)
             ->latest('issued_at')
             ->paginate(max(1, min($request->integer('per_page', 10), 50)));
@@ -68,9 +68,10 @@ class LoanController extends Controller
     public function store(StoreLoanRequest $request, LoanIssuanceService $loans): JsonResponse
     {
         $validated = $request->validated();
+        $payment = $validated['rental_fee_payment'];
         $loan = isset($validated['reservation_id'])
-            ? $loans->issueReservation($request->user(), (int) $validated['reservation_id'])
-            : $loans->issue($request->user(), (int) $validated['reader_id'], $validated['items']);
+            ? $loans->issueReservation($request->user(), (int) $validated['reservation_id'], $payment)
+            : $loans->issue($request->user(), (int) $validated['reader_id'], $validated['items'], $payment);
 
         return response()->json([
             'message' => 'Tạo phiếu mượn thành công.',
@@ -78,7 +79,8 @@ class LoanController extends Controller
                 'reader:id,name,email',
                 'reader.readerProfile:id,user_id,reader_code',
                 'issuer:id,name',
-                'items.book:id,title,book_code',
+                'items.book:id,title,book_code,cover_image_path,rental_fee',
+                'items.book.authors:id,name',
             ]),
         ], 201);
     }
@@ -90,7 +92,8 @@ class LoanController extends Controller
                 'reader:id,name,email',
                 'reader.readerProfile:id,user_id,reader_code',
                 'issuer:id,name',
-                'items.book:id,title,book_code',
+                'items.book:id,title,book_code,cover_image_path,rental_fee',
+                'items.book.authors:id,name',
                 'returns.returnedBy:id,name',
                 'returns.items.loanItem.book:id,title,book_code',
             ]),
@@ -153,7 +156,7 @@ class LoanController extends Controller
                 $secondsLate = $lockedLoan->due_at->diffInSeconds($returnedAt, false);
                 if ($secondsLate > 0) {
                     $overdueDays = max(1, (int) $lockedLoan->due_at->copy()->startOfDay()->diffInDays($returnedAt->copy()->startOfDay()));
-                    $dailyRate = 1000;
+                    $dailyRate = 3000;
                     Fine::create([
                         'loan_id' => $lockedLoan->id,
                         'loan_return_item_id' => $returnItem->id,

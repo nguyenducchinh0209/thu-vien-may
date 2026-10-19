@@ -10,7 +10,11 @@ class Loan extends Model
 {
     protected $appends = ['is_overdue', 'days_overdue'];
 
-    protected $fillable = ['reader_id', 'issued_by', 'issued_at', 'due_at', 'returned_at', 'status'];
+    protected $fillable = [
+        'reader_id', 'issued_by', 'issued_at', 'due_at', 'returned_at', 'status',
+        'rental_fee_total', 'rental_fee_received', 'rental_fee_received_at',
+        'rental_fee_received_by', 'rental_fee_payment_method', 'rental_fee_receipt_note',
+    ];
 
     protected function casts(): array
     {
@@ -18,6 +22,7 @@ class Loan extends Model
             'issued_at' => 'datetime',
             'due_at' => 'datetime',
             'returned_at' => 'datetime',
+            'rental_fee_received_at' => 'datetime',
         ];
     }
 
