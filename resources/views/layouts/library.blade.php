@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
-    @foreach (['styles.css', 'operations.css', 'professional.css'] as $stylesheet)
+    @foreach (['styles.css', 'operations.css', 'professional.css', 'search-community.css'] as $stylesheet)
         <link rel="stylesheet" href="{{ asset('library/' . $stylesheet) }}?v={{ filemtime(public_path('library/' . $stylesheet)) }}">
     @endforeach
     @stack('styles')
@@ -25,8 +25,8 @@
         ];
     @endphp
     <script>
-        window.libraryUser = {!! json_encode($libraryUser, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) !!};
-        window.libraryAuthUrls = {!! json_encode($libraryAuthUrls, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) !!};
+        window.libraryUser = {{ Illuminate\Support\Js::from($libraryUser) }};
+        window.libraryAuthUrls = {{ Illuminate\Support\Js::from($libraryAuthUrls) }};
     </script>
     @yield('content')
     @include('library.partials.dialogs')

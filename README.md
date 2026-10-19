@@ -1,112 +1,130 @@
-# Thư viện Mây
+# Library setup guide
 
-Đồ án website quản lý thư viện, sử dụng Laravel 12, Blade, CSS và JavaScript.
+## Environment
 
-## Chức năng hiện tại
+- Laragon on Windows
+- PHP 8.3.33
+- MySQL 8.4.3
+- Laravel 12 (install the versions in composer.lock)
+- Composer
 
-- Giao diện khám phá, danh mục, tìm kiếm và chi tiết sách, giỏ sách, kệ sách, hồ sơ và đọc thử.
-- Giao diện quản trị và nghiệp vụ thủ thư.
-- Đăng ký, đăng nhập, đăng xuất bằng Laravel session và Eloquent User; mật khẩu được băm và dữ liệu nhập được kiểm tra phía máy chủ.
-- Ba vai trò: Admin, Thủ thư và Độc giả; có middleware kiểm tra vai trò cho route nhân viên.
+Open Laragon Terminal. Check `php -v` and `mysql --version` before setup.
 
-Phần quản lý sách, tác giả, tài khoản trong bảng quản trị, phiếu mượn/trả, giỏ sách và dữ liệu nghiệp vụ khác hiện vẫn là bản trình diễn lưu trong trình duyệt. Các phần này cần tiếp tục nối với database Laravel. Dữ liệu tìm kiếm và phân trang sách hiện do JavaScript xử lý. AI, thanh toán và đọc EPUB đầy đủ chưa được tích hợp.
-
-## Cài đặt và chạy
-
-Yêu cầu PHP 8.2 trở lên có SQLite/PDO SQLite, Composer và Git. Có thể dùng Laragon Terminal trên Windows.
+## Installation
 
 ```powershell
 git clone https://github.com/nguyenducchinh0209/thu-vien-may.git
 cd thu-vien-may
+git switch main-v2
 composer install
-Copy-Item .env.example .env
-php artisan key:generate
-New-Item -ItemType File -Path database/database.sqlite -Force
-php artisan migrate --seed
-php artisan serve
+if (!(Test-Path .env)) {
+    Copy-Item .env.example .env
+    php artisan key:generate
+}
 ```
 
-Mở `http://127.0.0.1:8000/`. Giao diện hiện dùng tài nguyên trong `public/library`, không cần chạy npm để xem website.
+If .env already exists, preserve it and edit its database settings instead of copying over it.
+Start MySQL in Laragon. Create an empty development database using HeidiSQL or the MySQL client:
 
-Các tài khoản mẫu được tạo bằng seeder, chỉ dùng cho trình diễn ở môi trường local:
+```sql
+CREATE DATABASE thu_vien_may CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
 
-| Vai trò | Email | Mật khẩu mẫu |
+Configure .env for your local credentials:
+
+```dotenv
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=thu_vien_may
+DB_USERNAME=root
+DB_PASSWORD=
+```
+
+An empty password is only an example for a local installation. Use your actual credentials.
+
+```powershell
+php artisan config:clear
+php artisan migrate --seed
+php artisan serve --host=127.0.0.1 --port=8000
+```
+
+Open http://127.0.0.1:8000. The current frontend serves CSS/JavaScript from public/library; npm is not needed for that frontend.
+For a Laragon virtual host, set the document root to this project's public directory.
+
+## Demo accounts
+
+Use these accounts only in a local development database.
+
+| Role | Email | Password |
 | --- | --- | --- |
 | Admin | admin@library.vn | admin12345 |
-| Thủ thư | thuthu@library.vn | thuthu123 |
-| Độc giả | minhanh@example.com | docSach123 |
+| Librarian | thuthu@library.vn | thuthu123 |
+| Reader | minhanh@example.com | docSach123 |
 
-## Cấu trúc chính
+Repeated seeding preserves existing accounts, passwords and catalog records. Demo book titles and authors are fictional.
 
-- `app/Http/Controllers`: controller trang thư viện và xác thực.
-- `app/Http/Middleware`: middleware kiểm tra vai trò.
-- `resources/views`: layout và giao diện Blade.
-- `public/library`: CSS và JavaScript của giao diện.
-- `database/migrations`, `database/seeders`: cấu trúc database và tài khoản mẫu.
-- `routes/web.php`: route của website.
+## Database and models
 
-Xem thêm [hướng dẫn Laragon](README-THU-VIEN-MAY.md). Tệp `.env`, database SQLite, session, log, cache và thư mục `vendor` được loại khỏi Git; mỗi máy tự tạo môi trường và database khi cài đặt.
+- User: existing login fields, name and role. Existing role values remain Admin, Thủ thư and Độc giả for compatibility. Reader accounts are soft-deleted so future loan history remains linked.
+- ReaderProfile: one per reader, unique user_id and reader_code, optional phone, address, date_of_birth and avatar_path. The full name remains in users.name to avoid duplicate data.
+- Author: name, optional biography; soft deletion.
+- Book: unique book_code, title, optional unique ISBN, description, publisher, publication_year, edition and cover_image_path; total_quantity and rental_fee in VND; soft deletion.
+- author_book: many-to-many relation; composite primary key prevents duplicate links.
 
----
+Relations: User::readerProfile(), ReaderProfile::user(), Book::authors(), Author::books().
+Reader codes are generated from the unique user ID as RD000001; gaps are expected.
+New reader accounts created through Eloquent automatically receive a profile. Registration writes both records in one transaction. The migration also creates profiles for existing readers.
+Create reader accounts through Eloquent, with the reader role set at creation; raw inserts and later role changes do not create profiles automatically.
+Book codes such as BK000001 identify a title/edition, not an individual physical copy. Supply a unique code when creating a book and retain it when editing its title. Handle duplicate-code validation in the CRUD endpoint; never generate codes by counting rows.
+A different edition gets a separate record. total_quantity counts all physical copies of the title. rental_fee is the per-copy fee for a 14-day loan; store it as a decimal, not a float.
+Validate nonnegative quantity/fee, field lengths, ISBN uniqueness and sensible publication years in CRUD requests. Do not expose profile identifiers for mass assignment.
+Foreign keys restrict hard deletion of linked records. Soft-deleting books/authors preserves links. Normal relationship queries exclude soft-deleted catalog records.
 
-Thông tin framework Laravel dùng làm nền tảng của đồ án:
+```mermaid
+erDiagram
+    users ||--o| reader_profiles : has
+    books ||--o{ author_book : has
+    authors ||--o{ author_book : has
+```
 
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+## Scope
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+This foundation contains accounts, reader profiles, authors, books and sample data. Existing authentication and frontend are retained. Staff-only JSON CRUD endpoints are available for books, authors and readers under `/staff`; the frontend catalog and staff screens still need to be connected to them.
 
-## About Laravel
+Staff catalog and reader endpoints require authentication and the `Admin` or `Thủ thư` role. All list endpoints support `q` search and pagination using `page` and `per_page` (maximum 50):
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- Books: `/staff/books` — search title, code, ISBN, publisher or author; create/update accepts `author_ids` and an optional `cover_image` upload.
+- Authors: `/staff/authors` — search by name; deleting an author is soft deletion and preserves its book links.
+- Readers: `/staff/readers` — search name, email, reader code or phone; create requires a confirmed password and always assigns the `Độc giả` role. Optional avatar uploads use the `avatar` field. Deleting a reader is soft deletion; profile and future history are retained.
+- Loans: `/staff/loans` — staff issue a 14-day loan to a reader with one or more book quantities. `POST /staff/loans/{id}/returns` records full or partial returns and keeps each return event in history.
+- Inventory: `GET /staff/inventory` — lists total, currently-on-loan and available copy counts. Availability subtracts copies that have not yet been returned on active loans.
+- Public catalog: `GET /catalog/books` and `GET /catalog/books/{id}` — public search/details with author and rating summary.
+- Reader loan history: `GET /my/loans` — a reader's loans, return history and current overdue indicator.
+- Reader cart: `/my/cart` and `/my/cart/items` support listing, adding, updating and removing items. `POST /my/cart/reservations` submits all cart items as queued reservations atomically and clears the cart only on success.
+- Reservations: readers use `POST /reservations`, `GET /my/reservations` and `DELETE /reservations/{id}`. Staff use `/staff/reservations`; approve with `POST /staff/reservations/{id}/ready`, then issue the loan with `POST /staff/reservations/{id}/fulfill`. Requests are queued FIFO per title; an approved quantity is held for 3 days.
+- Fines: `GET /my/fines` for readers; staff list via `GET /staff/fines`. A late return creates an unpaid fine at 1,000 VND per returned copy per late calendar day. Admins may waive an unpaid fine with a reason. Payment capture/history is intentionally left for the payment integration.
+- Reviews and comments: `GET /books/{id}/reviews`, `GET /books/{id}/comments`; signed-in readers can post, edit or delete their own review and post/delete their own comments. Ratings publish immediately and one review per reader per book is allowed.
+- Book suggestions: readers use `POST /book-suggestions` and `GET /my/book-suggestions`; staff list at `/staff/book-suggestions` and update status to `approved`, `rejected` or `ordered`.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+For browser access to uploaded book covers and reader avatars, run `php artisan storage:link` once per local setup.
+The scheduled `reservations:expire` command marks ready holds past their 3-day pickup window as expired. Run Laravel's scheduler in deployment (for local testing, `php artisan schedule:work`). Current inventory subtracts both outstanding copies on active loans and non-expired ready reservations from `total_quantity`.
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+## Verification
 
-## Learning Laravel
+```powershell
+php artisan test
+```
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+The default automated suite uses an isolated SQLite in-memory database. For MySQL integration testing, create a separate empty database named thu_vien_may_test and configure .env.testing with its credentials. Never point tests at a database containing real data: RefreshDatabase recreates tables.
+Run the following from Laragon Terminal to override the SQLite test defaults:
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+```powershell
+$env:DB_CONNECTION='mysql'
+$env:DB_DATABASE='thu_vien_may_test'
+php artisan test
+Remove-Item Env:DB_CONNECTION
+Remove-Item Env:DB_DATABASE
+```
 
-## Laravel Sponsors
-
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
-
-### Premium Partners
-
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
-
-## Contributing
-
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
-
-## Code of Conduct
-
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
-
-## Security Vulnerabilities
-
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
-
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+Use `php artisan migrate` for additive updates. Do not use migrate:fresh on a database whose data must be retained. Keep .env, vendor and runtime database files out of Git.
