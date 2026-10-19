@@ -1,0 +1,147 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\User;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
+
+class AuthController extends Controller
+{
+    public function register(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'min:2', 'max:100'],
+            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+            'password' => ['required', 'string', 'min:8', 'confirmed'],
+        ], [
+            'name.required' => 'Vui lòng nhập họ và tên.',
+            'name.min' => 'Họ và tên cần có ít nhất 2 ký tự.',
+            'email.required' => 'Vui lòng nhập email.',
+            'email.email' => 'Email chưa đúng định dạng.',
+            'email.unique' => 'Email này đã được đăng ký.',
+            'password.min' => 'Mật khẩu cần có ít nhất 8 ký tự.',
+            'password.confirmed' => 'Mật khẩu nhập lại chưa khớp.',
+        ]);
+
+        $user = DB::transaction(fn () => User::create([
+            'name' => $validated['name'],
+            'email' => mb_strtolower($validated['email']),
+            'password' => $validated['password'],
+            'role' => 'Độc giả',
+        ]));
+
+        Auth::login($user);
+        $request->session()->regenerate();
+
+        return response()->json([
+            'message' => 'Tạo tài khoản thành công.',
+            'user' => $this->userPayload($user),
+            'csrf_token' => $request->session()->token(),
+        ], 201);
+    }
+
+    public function login(Request $request): JsonResponse
+    {
+        $credentials = $request->validate([
+            'email' => ['required', 'email'],
+            'password' => ['required', 'string'],
+        ], [
+            'email.required' => 'Vui lòng nhập email.',
+            'email.email' => 'Email chưa đúng định dạng.',
+            'password.required' => 'Vui lòng nhập mật khẩu.',
+        ]);
+
+        $credentials['email'] = mb_strtolower($credentials['email']);
+        $authenticated = Auth::attempt($credentials, $request->boolean('remember'));
+        if (! $authenticated || Auth::user()?->is_locked) {
+            $locked = $authenticated && (bool) Auth::user()?->is_locked;
+            Auth::logout();
+            throw ValidationException::withMessages([
+                'email' => $locked ? 'Tài khoản đã bị khóa.' : 'Email hoặc mật khẩu chưa chính xác.',
+            ]);
+        }
+
+        $request->session()->regenerate();
+
+        return response()->json([
+            'message' => 'Đăng nhập thành công.',
+            'user' => $this->userPayload($request->user()),
+            'csrf_token' => $request->session()->token(),
+        ]);
+    }
+
+    public function logout(Request $request): JsonResponse
+    {
+        Auth::guard('web')->logout();
+        $request->session()->invalidate();
+        $request->session()->regenerateToken();
+
+        return response()->json([
+            'message' => 'Bạn đã đăng xuất.',
+            'csrf_token' => $request->session()->token(),
+        ]);
+    }
+
+    public function profile(Request $request): JsonResponse
+    {
+        $user = $request->user()->load('readerProfile');
+        $profile = $user->readerProfile?->toArray();
+        if ($profile) {
+            $profile['date_of_birth'] = $user->readerProfile->date_of_birth?->format('Y-m-d');
+            $profile['avatar_url'] = $user->readerProfile->avatar_path
+                ? Storage::disk('public')->url($user->readerProfile->avatar_path)
+                : null;
+        }
+
+        return response()->json(['user' => $this->userPayload($user), 'profile' => $profile]);
+    }
+
+    public function updateProfile(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $validated = $request->validate([
+            'name' => ['required', 'string', 'min:2', 'max:100'],
+            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email,'.$user->id],
+            'phone' => ['nullable', 'string', 'max:20'],
+            'address' => ['nullable', 'string', 'max:5000'],
+            'date_of_birth' => ['nullable', 'date', 'before:today'],
+            'avatar' => ['nullable', 'image', 'max:2048'],
+        ]);
+        $profileData = array_intersect_key($validated, array_flip(['phone', 'address', 'date_of_birth']));
+        $oldAvatar = $user->readerProfile?->avatar_path;
+        if ($request->hasFile('avatar')) {
+            $profileData['avatar_path'] = $request->file('avatar')->store('reader-avatars', 'public');
+        }
+        DB::transaction(function () use ($user, $validated, $profileData): void {
+            $user->update(['name' => $validated['name'], 'email' => mb_strtolower($validated['email'])]);
+            $user->readerProfile()->updateOrCreate([], $profileData);
+        });
+        if (isset($profileData['avatar_path']) && $oldAvatar) {
+            Storage::disk('public')->delete($oldAvatar);
+        }
+        $user->refresh()->load('readerProfile');
+        $profile = $user->readerProfile?->toArray();
+        if ($profile) {
+            $profile['date_of_birth'] = $user->readerProfile->date_of_birth?->format('Y-m-d');
+            $profile['avatar_url'] = $user->readerProfile->avatar_path
+                ? Storage::disk('public')->url($user->readerProfile->avatar_path)
+                : null;
+        }
+
+        return response()->json([
+            'message' => 'Đã cập nhật hồ sơ.',
+            'user' => $this->userPayload($user),
+            'profile' => $profile,
+        ]);
+    }
+
+    private function userPayload(User $user): array
+    {
+        return $user->only(['id', 'name', 'email', 'role']);
+    }
+}
