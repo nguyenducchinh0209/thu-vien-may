@@ -3,6 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Membership;
+use App\Models\Book;
+use App\Models\Fine;
+use App\Models\Loan;
+use App\Models\LoanItem;
 use App\Models\Payment;
 use App\Models\PaymentEvent;
 use App\Models\PaymentQuote;
@@ -21,15 +25,23 @@ class PaymentController extends Controller
     public function quote(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'purpose' => ['required', 'string', 'in:reservation,vip'],
+            'purpose' => ['required', 'string', 'in:reservation,vip,fine'],
             'reference_id' => ['required', 'string', 'max:40'],
         ]);
 
         [$quote, $payment] = DB::transaction(function () use ($request, $data): array {
             if ($data['purpose'] === 'reservation') {
+                $bookId = Reservation::query()
+                    ->where('reader_id', $request->user()->id)
+                    ->whereKey($data['reference_id'])
+                    ->value('book_id');
+                abort_if($bookId === null, 404);
+                $book = Book::query()->whereKey($bookId)->lockForUpdate()->first();
+                abort_if(! $book, 409, 'Sách của yêu cầu không còn trong danh mục hoạt động.');
                 $reservation = Reservation::query()
                     ->where('reader_id', $request->user()->id)
                     ->whereKey($data['reference_id'])
+                    ->where('book_id', $bookId)
                     ->lockForUpdate()
                     ->firstOrFail();
                 $existingPayment = Payment::query()->with('quote')
@@ -47,12 +59,41 @@ class PaymentController extends Controller
                     abort(409, 'Giao dịch đặt trước đã hết hiệu lực hoặc không thể tạo giao dịch khác.');
                 }
 
-                if ($reservation->status !== 'ready' || $reservation->payment_status !== 'unpaid'
-                    || ! $reservation->expires_at?->isFuture() || $reservation->amount === null) {
+                if ($reservation->status !== 'ready' || ! $reservation->expires_at?->isFuture()) {
                     abort(409, 'Yêu cầu đặt trước chưa được duyệt, đã hết hạn hoặc chưa có báo giá hợp lệ.');
                 }
 
-                $book = $reservation->book()->firstOrFail();
+                if ($reservation->payment_status === null && $reservation->amount === null
+                    && $reservation->payment_method === null && $reservation->currency === null) {
+                    if (Loan::query()->where('reservation_id', $reservation->id)->exists()) {
+                        abort(409, 'Yêu cầu đặt trước đã có phiếu mượn, không thể tạo báo giá mới.');
+                    }
+
+                    $onLoan = (int) LoanItem::query()
+                        ->where('book_id', $book->id)
+                        ->whereHas('loan', fn (Builder $query) => $query->where('status', 'active'))
+                        ->sum(DB::raw('quantity - returned_quantity'));
+                    $otherReserved = (int) Reservation::query()
+                        ->where('book_id', $book->id)
+                        ->where('id', '!=', $reservation->id)
+                        ->where('status', 'ready')
+                        ->where('expires_at', '>', now())
+                        ->sum('quantity');
+                    $available = $book->total_quantity - $onLoan - $otherReserved;
+                    if ((int) $reservation->quantity > $available) {
+                        abort(409, "Chỉ còn {$available} bản có thể giữ cho yêu cầu này.");
+                    }
+
+                    $amount = $this->formatCents($this->moneyCents((string) $book->rental_fee) * (int) $reservation->quantity);
+                    $reservation->update([
+                        'payment_status' => 'unpaid',
+                        'amount' => $amount,
+                        'currency' => 'VND',
+                    ]);
+                } elseif ($reservation->payment_status !== 'unpaid' || $reservation->amount === null) {
+                    abort(409, 'Yêu cầu đặt trước chưa có báo giá hợp lệ.');
+                }
+
                 $amount = (string) $reservation->amount;
                 $quantity = (int) $reservation->quantity;
                 $item = [
@@ -72,6 +113,73 @@ class PaymentController extends Controller
                     'items_snapshot' => [$item],
                     'allowed_methods' => ['cash', 'bank_transfer'],
                     'expires_at' => $reservation->expires_at,
+                ]);
+
+                return [$quote, null];
+            }
+
+            if ($data['purpose'] === 'fine') {
+                $fine = Fine::query()
+                    ->where('reader_id', $request->user()->id)
+                    ->whereKey($data['reference_id'])
+                    ->lockForUpdate()
+                    ->firstOrFail();
+                if ($fine->status !== 'unpaid' || $fine->payments()->exists()) {
+                    abort(409, 'Khoản phạt không còn đủ điều kiện thanh toán trực tuyến.');
+                }
+
+                if (Payment::query()->where('fine_id', $fine->id)->where('status', 'paid')->exists()) {
+                    abort(409, 'Khoản phạt đã được thu qua giao dịch. Vui lòng liên hệ thư viện để đối soát.');
+                }
+
+                $resumablePayment = null;
+                $activePayments = Payment::query()->with('quote')
+                    ->where('fine_id', $fine->id)
+                    ->whereIn('status', ['pending', 'confirming'])
+                    ->latest('created_at')
+                    ->lockForUpdate()
+                    ->get();
+                foreach ($activePayments as $attempt) {
+                    if ($attempt->quote->expires_at->isFuture()) {
+                        $resumablePayment ??= $attempt;
+                    } else {
+                        $this->transition($attempt, 'expired', 'quote_expired', null, 'Báo giá khoản phạt đã hết hạn.');
+                    }
+                }
+                if ($resumablePayment) {
+                    return [$resumablePayment->quote, $resumablePayment];
+                }
+
+                $existingQuote = PaymentQuote::query()
+                    ->where('fine_id', $fine->id)
+                    ->where('expires_at', '>', now())
+                    ->whereDoesntHave('payment')
+                    ->latest('created_at')
+                    ->lockForUpdate()
+                    ->first();
+                if ($existingQuote) {
+                    return [$existingQuote, null];
+                }
+
+                $fine->loadMissing('returnItem.loanItem.book');
+                $bookTitle = $fine->returnItem?->loanItem?->book?->title ?? 'Khoản phạt quá hạn';
+                $amount = (string) $fine->amount;
+                $quote = PaymentQuote::create([
+                    'id' => (string) Str::ulid(),
+                    'reader_id' => $request->user()->id,
+                    'purpose' => 'fine',
+                    'fine_id' => $fine->id,
+                    'total_amount' => $amount,
+                    'currency' => 'VND',
+                    'items_snapshot' => [[
+                        'fine_id' => $fine->id,
+                        'title' => 'Tiền phạt · '.$bookTitle,
+                        'quantity' => 1,
+                        'unit_amount' => $amount,
+                        'line_amount' => $amount,
+                    ]],
+                    'allowed_methods' => ['cash', 'bank_transfer'],
+                    'expires_at' => now()->addHours((int) config('membership.quote_ttl_hours', 48)),
                 ]);
 
                 return [$quote, null];
@@ -146,8 +254,12 @@ class PaymentController extends Controller
                 return [$existingKey, false];
             }
 
-            $quote = PaymentQuote::query()->whereKey($data['quote_id'])->lockForUpdate()->firstOrFail();
+            $quote = PaymentQuote::query()->whereKey($data['quote_id'])->firstOrFail();
             abort_unless($quote->reader_id === $request->user()->id, 404);
+            $fine = $quote->purpose === 'fine'
+                ? Fine::query()->whereKey($quote->fine_id)->lockForUpdate()->firstOrFail()
+                : null;
+            $quote = PaymentQuote::query()->whereKey($quote->id)->lockForUpdate()->firstOrFail();
             if (! $quote->expires_at->isFuture()) {
                 abort(409, 'Báo giá đã hết hạn. Vui lòng tạo báo giá mới.');
             }
@@ -158,7 +270,10 @@ class PaymentController extends Controller
             $quotePayment = Payment::query()->where('quote_id', $quote->id)->lockForUpdate()->first();
             if ($quotePayment) {
                 if ($quotePayment->reader_id === $request->user()->id && $quotePayment->method === $data['method']) {
-                    return [$quotePayment, false];
+                    if ($quote->purpose !== 'fine'
+                        || in_array($quotePayment->status, ['pending', 'confirming', 'paid'], true)) {
+                        return [$quotePayment, false];
+                    }
                 }
                 abort(409, 'Báo giá này đã được dùng cho một giao dịch khác.');
             }
@@ -181,6 +296,31 @@ class PaymentController extends Controller
                 }
             }
 
+            if ($fine) {
+                abort_unless($fine->reader_id === $request->user()->id, 404);
+                if ($fine->status !== 'unpaid' || $fine->payments()->exists()
+                    || number_format((float) $fine->amount, 2, '.', '') !== number_format((float) $quote->total_amount, 2, '.', '')) {
+                    abort(409, 'Khoản phạt không còn đủ điều kiện thanh toán theo báo giá này.');
+                }
+                if (Payment::query()->where('fine_id', $fine->id)->where('status', 'paid')->exists()) {
+                    abort(409, 'Khoản phạt đã được thu qua giao dịch. Vui lòng liên hệ thư viện để đối soát.');
+                }
+                $activeAttempts = Payment::query()->where('fine_id', $fine->id)
+                    ->whereIn('status', ['pending', 'confirming'])
+                    ->latest('created_at')->lockForUpdate()->get(['id', 'quote_id']);
+                foreach ($activeAttempts as $candidate) {
+                    $attemptQuote = PaymentQuote::query()->whereKey($candidate->quote_id)->lockForUpdate()->firstOrFail();
+                    $attempt = Payment::query()->whereKey($candidate->id)->lockForUpdate()->firstOrFail();
+                    if (! in_array($attempt->status, ['pending', 'confirming'], true)) {
+                        continue;
+                    }
+                    if ($attemptQuote->expires_at->isFuture()) {
+                        abort(409, 'Khoản phạt đang có một giao dịch thanh toán khác.');
+                    }
+                    $this->transition($attempt, 'expired', 'quote_expired', null, 'Báo giá khoản phạt đã hết hạn.');
+                }
+            }
+
             $paymentId = (string) Str::ulid();
             $transfer = $data['method'] === 'bank_transfer' ? [
                 'simulated' => true,
@@ -194,6 +334,7 @@ class PaymentController extends Controller
                 'reader_id' => $request->user()->id,
                 'quote_id' => $quote->id,
                 'reservation_id' => $quote->reservation_id,
+                'fine_id' => $quote->fine_id,
                 'purpose' => $quote->purpose,
                 'method' => $data['method'],
                 'status' => 'pending',
@@ -240,14 +381,21 @@ class PaymentController extends Controller
         abort_unless($payment->reader_id === $request->user()->id, 404);
         abort_unless($payment->method === 'bank_transfer', 409, 'Giao dịch này không dùng chuyển khoản mô phỏng.');
         $payment = DB::transaction(function () use ($request, $payment): Payment {
+            $initial = Payment::query()->whereKey($payment->id)->firstOrFail();
+            $fine = $initial->fine_id
+                ? Fine::query()->whereKey($initial->fine_id)->lockForUpdate()->firstOrFail()
+                : null;
+            if ($fine) {
+                $quote = PaymentQuote::query()->whereKey($initial->quote_id)->lockForUpdate()->firstOrFail();
+            }
             $payment = Payment::query()->whereKey($payment->id)->lockForUpdate()->firstOrFail();
+            $quote ??= PaymentQuote::query()->whereKey($payment->quote_id)->lockForUpdate()->firstOrFail();
             if ($payment->status === 'confirming') {
                 return $payment;
             }
             if ($payment->status !== 'pending') {
                 abort(409, 'Giao dịch không còn chờ báo chuyển khoản.');
             }
-            $quote = PaymentQuote::query()->whereKey($payment->quote_id)->lockForUpdate()->firstOrFail();
             if (! $quote->expires_at->isFuture()) {
                 abort(409, 'Báo giá đã hết hạn.');
             }
@@ -257,6 +405,13 @@ class PaymentController extends Controller
                     abort(409, 'Thời hạn giữ sách đã hết. Vui lòng liên hệ thư viện để được hướng dẫn.');
                 }
                 $reservation->update(['payment_status' => 'confirming']);
+            }
+            if ($fine) {
+                abort_unless($fine->reader_id === $request->user()->id && $fine->status === 'unpaid', 409,
+                    'Khoản phạt không còn chờ thanh toán.');
+                if (number_format((float) $fine->amount, 2, '.', '') !== number_format((float) $payment->amount, 2, '.', '')) {
+                    abort(409, 'Số tiền giao dịch không còn khớp với khoản phạt.');
+                }
             }
             $payment->update(['reported_at' => now()]);
             $this->transition($payment, 'confirming', 'transfer_reported', $request->user()->id, 'Người dùng đã báo chuyển khoản mô phỏng.');
@@ -298,7 +453,7 @@ class PaymentController extends Controller
                 ],
                 'reference' => $payment->purpose === 'reservation'
                     ? 'Yêu cầu đặt sách #'.$payment->reservation_id
-                    : $payment->quote->items_snapshot[0]['title'],
+                    : ($payment->quote->items_snapshot[0]['title'] ?? 'Thanh toán'),
             ]);
 
         return response()->json($payments);
@@ -308,7 +463,15 @@ class PaymentController extends Controller
     {
         $data = $request->validate(['method' => ['required', 'string', 'in:cash,bank_transfer']]);
         $payment = DB::transaction(function () use ($request, $payment, $data): Payment {
+            $initial = Payment::query()->whereKey($payment->id)->firstOrFail();
+            $fine = $initial->fine_id
+                ? Fine::query()->whereKey($initial->fine_id)->lockForUpdate()->firstOrFail()
+                : null;
+            if ($fine) {
+                $quote = PaymentQuote::query()->whereKey($initial->quote_id)->lockForUpdate()->firstOrFail();
+            }
             $payment = Payment::query()->whereKey($payment->id)->lockForUpdate()->firstOrFail();
+            $quote ??= PaymentQuote::query()->whereKey($payment->quote_id)->lockForUpdate()->firstOrFail();
             if ($payment->status === 'paid') {
                 return $payment;
             }
@@ -321,7 +484,6 @@ class PaymentController extends Controller
                     ? 'Độc giả chưa báo đã chuyển khoản.'
                     : 'Giao dịch tiền mặt không còn chờ thu.');
             }
-            $quote = PaymentQuote::query()->whereKey($payment->quote_id)->lockForUpdate()->firstOrFail();
             if (! $quote->expires_at->isFuture()) {
                 abort(409, 'Báo giá đã hết hạn; giao dịch chưa được xác nhận.');
             }
@@ -331,6 +493,13 @@ class PaymentController extends Controller
                 $reservation = Reservation::query()->whereKey($payment->reservation_id)->lockForUpdate()->firstOrFail();
                 if ($reservation->status !== 'ready' || ! $reservation->expires_at?->isFuture()) {
                     abort(409, 'Thời hạn giữ sách đã hết; giao dịch chưa được xác nhận.');
+                }
+            }
+            if ($fine) {
+                if ($fine->status !== 'unpaid'
+                    || number_format((float) $fine->amount, 2, '.', '') !== number_format((float) $payment->amount, 2, '.', '')
+                    || $fine->payments()->exists()) {
+                    abort(409, 'Khoản phạt không còn khớp với giao dịch hoặc đã được thu.');
                 }
             }
 
@@ -343,8 +512,23 @@ class PaymentController extends Controller
 
             if ($reservation) {
                 $reservation->update(['payment_status' => 'paid']);
-            } else {
+            } elseif ($fine) {
+                $fine->payments()->create([
+                    'received_by' => $request->user()->id,
+                    'amount' => $payment->amount,
+                    'method' => $payment->method,
+                    'receipt_note' => 'Thu qua giao dịch '.$payment->id,
+                    'paid_at' => $now,
+                ]);
+                $fine->update([
+                    'status' => 'paid',
+                    'paid_by' => $request->user()->id,
+                    'paid_at' => $now,
+                ]);
+            } elseif ($payment->purpose === 'vip') {
                 $this->grantVipMembership($payment, $now);
+            } else {
+                abort(409, 'Mục đích thanh toán không được hỗ trợ.');
             }
 
             return $payment->fresh();
@@ -355,6 +539,7 @@ class PaymentController extends Controller
             'payment' => $this->paymentPayload($payment),
             'reservation' => $payment->reservation_id ? $this->reservationPayload($payment->reservation) : null,
             'membership' => $payment->purpose === 'vip' ? $this->membershipPayload($payment->reader_id) : null,
+            'fine' => $payment->purpose === 'fine' ? Fine::query()->find($payment->fine_id) : null,
         ]);
     }
 
@@ -382,7 +567,7 @@ class PaymentController extends Controller
         $payload = [
             'id' => $quote->id,
             'purpose' => $quote->purpose,
-            'reference_id' => (string) ($quote->reservation_id ?? $quote->plan_id),
+            'reference_id' => (string) ($quote->reservation_id ?? $quote->fine_id ?? $quote->plan_id),
             'currency' => $quote->currency,
             'total_amount' => $quote->total_amount,
             'expires_at' => $quote->expires_at->toISOString(),
@@ -391,6 +576,8 @@ class PaymentController extends Controller
         ];
         if ($quote->purpose === 'reservation') {
             $payload['reservation'] = $this->reservationPayload($quote->reservation);
+        } elseif ($quote->purpose === 'fine') {
+            $payload['fine'] = ['id' => $quote->fine_id];
         }
 
         return $payload;

@@ -52,6 +52,7 @@
         return request('reservationWorkflow', path, {...options, method:'POST', body});
       },
       reservations: options => request('reservationWorkflow', endpoints.reservations, options),
+      reservation: (id, options) => request('reservationWorkflow', `${endpoints.reservations}/${encodeURIComponent(id)}`, options),
       chat: (message, history, options={}) => request('chat', endpoints.chat, {...options, method:'POST', body:{message, history:history.slice(-8)}}),
     });
   }

@@ -89,6 +89,7 @@ Route::middleware(['auth', 'active', 'role:Độc giả'])
         Route::post('/my/cart/reservations', [ReaderCartController::class, 'checkout'])->name('cart.reservations.store');
         Route::get('/my/loans', [LoanController::class, 'mine'])->name('loans.mine');
         Route::get('/my/reservations', [ReservationController::class, 'mine'])->name('reservations.mine');
+        Route::get('/my/reservations/{reservation}', [ReservationController::class, 'show'])->name('reservations.show');
         Route::post('/my/reservations/{reservation}/transfer', [PaymentController::class, 'reportReservationTransfer'])->name('reservations.transfer');
         Route::post('/reservations', [ReservationController::class, 'store'])->name('reservations.store');
         Route::delete('/reservations/{reservation}', [ReservationController::class, 'cancel'])->name('reservations.cancel');

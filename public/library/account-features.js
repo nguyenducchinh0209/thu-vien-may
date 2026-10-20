@@ -1,10 +1,12 @@
 /* Account screens share the existing auth router and render lifecycle. */
 const accountFeatures = (() => {
   'use strict';
+  if (typeof labels !== 'undefined') labels['reservation-detail'] = 'Chi tiết đặt trước';
   const api = window.libraryFeatureApi, rules = window.LibraryFeatureRules;
   const genderLabels = {'':'Chưa cập nhật', male:'Nam', female:'Nữ', other:'Khác', prefer_not_to_say:'Không muốn chia sẻ'};
   let epoch = 0, identity = null, membership = null, membershipLoading = false;
   let plans = null, plansError = '', plansLoading = false, checkout = null, route = null;
+  let reservationRecord = null, reservationLoading = false, reservationError = '';
   let menuOpen = false, closeTimer, chatOpen = false, chatBusy = false, chatError = '', lastMessage = '';
   let messages = [], chatController = null, avatarUrl = null;
   const esc = value => escapeHTML(String(value ?? ''));
@@ -25,6 +27,7 @@ const accountFeatures = (() => {
     if (identity === (session?.id ?? null)) return;
     identity = session?.id ?? null; epoch++; membership = null; membershipLoading = false;
     plans = null; plansLoading = false; plansError = ''; checkout = null;
+    reservationRecord = null; reservationLoading = false; reservationError = '';
     chatController?.abort(); chatController = null; messages = []; chatBusy = false; chatError = ''; lastMessage = '';
     revokeAvatar(); setMenu(false); renderChat();
   }
@@ -43,7 +46,9 @@ const accountFeatures = (() => {
     }
   }
   function resolve(value) {
-    const match = /^checkout\/(reservation|vip)\/([a-zA-Z0-9_-]+)$/.exec(value);
+    const reservation = /^reservation\/([a-zA-Z0-9_-]+)$/.exec(value);
+    if (reservation) return {page:'reservation-detail', id:reservation[1]};
+    const match = /^checkout\/(reservation|vip|fine)\/([a-zA-Z0-9_-]+)$/.exec(value);
     if (match) return {page:'checkout', purpose:match[1], referenceId:match[2]};
     if (['profile','profile-edit','vip','help'].includes(value)) return {page:value};
     return null;
@@ -51,13 +56,17 @@ const accountFeatures = (() => {
   function setRoute(value) {
     const next = resolve(value);
     if (route?.page === 'checkout' && (!next || next.page !== 'checkout' || next.purpose !== route.purpose || next.referenceId !== route.referenceId)) checkout = null;
+    if (route?.page === 'reservation-detail' && (!next || next.page !== 'reservation-detail' || next.id !== route.id)) {
+      reservationRecord = null; reservationLoading = false; reservationError = '';
+    }
     route = next;
   }
   function enter() {
     if (state.page !== 'profile-edit') revokeAvatar();
     setMenu(false);
     if (state.page === 'vip' && plans === null && !plansLoading && !plansError && api.capabilities.plans) loadPlans();
-    if (state.page === 'checkout' && route?.page === 'checkout' && (route.purpose === 'vip' || api.capabilities.reservationWorkflow)) {
+    if (state.page === 'reservation-detail' && route?.page === 'reservation-detail' && !reservationLoading && !reservationError && String(reservationRecord?.reservation?.id) !== String(route.id)) loadReservation(route.id);
+    if (state.page === 'checkout' && route?.page === 'checkout' && (route.purpose === 'vip' || (route.purpose === 'fine' && api.capabilities.payments) || api.capabilities.reservationWorkflow)) {
       const key = `${epoch}/${route.purpose}/${route.referenceId}`;
       if (checkout?.key !== key) {
         checkout = {key, purpose:route.purpose, referenceId:route.referenceId, loading:true, error:'', quote:null, payment:null, busy:false, method:'', requestKey:crypto.randomUUID()};
@@ -75,6 +84,22 @@ const accountFeatures = (() => {
     }
     catch (error) { if (current === epoch) plansError = error.message; }
     finally { if (current === epoch) { plansLoading = false; if (state.page === 'vip') render(); } }
+  }
+  async function loadReservation(id) {
+    reservationLoading = true; reservationError = ''; reservationRecord = null;
+    const current = epoch;
+    try {
+      const result = await api.reservation(id);
+      if (!result?.reservation || String(result.reservation.id) !== String(id)) throw new Error('Không tìm thấy yêu cầu đặt trước này.');
+      if (current === epoch && route?.page === 'reservation-detail' && String(route.id) === String(id)) reservationRecord = result;
+    } catch (error) {
+      if (current === epoch && route?.page === 'reservation-detail' && String(route.id) === String(id)) reservationError = error.message;
+    } finally {
+      if (current === epoch && route?.page === 'reservation-detail' && String(route.id) === String(id)) {
+        reservationLoading = false;
+        if (state.page === 'reservation-detail') render();
+      }
+    }
   }
   function validQuote(q, target, payment=null) {
     if (!q?.id || q.purpose !== target.purpose || String(q.reference_id) !== target.referenceId || q.currency !== 'VND' || !rules.isAmount(q.total_amount) || !Array.isArray(q.items) || !q.items.length || !(Date.parse(q.expires_at) > Date.now())) return false;
@@ -98,6 +123,40 @@ const accountFeatures = (() => {
     if (rules.reservationPayable(row)) return button('Thanh toán','checkout/reservation/'+encodeURIComponent(row.id),'secondary-button reservation-payment');
     if (['pending','confirming','paid'].includes(row.payment_status)) return button('Xem thanh toán','checkout/reservation/'+encodeURIComponent(row.id),'secondary-button reservation-payment');
     return '';
+  }
+  function reservationViewLink(row) {
+    return row?.id ? button('Xem chi tiết',`reservation/${encodeURIComponent(row.id)}`,'secondary-button reservation-detail-link') : '';
+  }
+  function finePaymentLink(row) {
+    if (!api.capabilities.payments || !row?.id) return '';
+    if (row.raw_status === 'unpaid' && !['pending','confirming','paid'].includes(row.payment_status)) return button('Thanh toán khoản phạt',`checkout/fine/${encodeURIComponent(row.id)}`,'secondary-button fine-payment-link');
+    if (['pending','confirming'].includes(row.payment_status)) return button('Xem thanh toán',`checkout/fine/${encodeURIComponent(row.id)}`,'secondary-button fine-payment-link');
+    return '';
+  }
+  function reservationDetailView() {
+    const id = route?.id;
+    const intro = heading('TÀI KHOẢN ĐỘC GIẢ','Chi tiết yêu cầu đặt trước','Theo dõi trạng thái xử lý và khoản thanh toán của yêu cầu này.',button('← Quay lại','reservations'));
+    if (!id) return intro + unavailable('Liên kết yêu cầu đặt trước không hợp lệ.');
+    if (reservationLoading) return intro + '<p class="feature-loading" role="status">Đang tải yêu cầu đặt trước…</p>';
+    if (!reservationRecord) return intro + unavailable(reservationError || 'Chưa tải được thông tin yêu cầu.', 'reservation');
+    const {reservation:r,payment,loan}=reservationRecord;
+    const statuses={pending:'Chờ duyệt',ready:'Đã duyệt, đang giữ sách',expired:'Đã hết hạn',fulfilled:'Đã giao sách',cancelled:'Đã hủy'};
+    const paymentStatuses={unpaid:'Chưa thanh toán',pending:'Chờ xác nhận thanh toán',confirming:'Đang chờ xác nhận chuyển khoản',paid:'Đã thanh toán'};
+    const legacyReadyWithoutPayment=r.status==='ready'&&r.payment_status==null&&!payment;
+    const detail=[['Mã yêu cầu',r.id],['Sách',r.book?.title],['Mã sách',r.book?.book_code],['Số lượng',r.quantity],['Trạng thái',statuses[r.status]||r.status],['Thanh toán',paymentStatuses[r.payment_status]||(legacyReadyWithoutPayment?'Chưa thiết lập':r.payment_status)],['Ngày duyệt',r.ready_at?date(r.ready_at):''],['Hạn giữ sách',r.expires_at?date(r.expires_at):''],['Số tiền',r.amount==null?'':money(r.amount)]]
+      .filter(([,value])=>value!==null&&value!==undefined&&value!=='')
+      .map(([label,value])=>`<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('');
+    const statusMessage=r.status==='pending'?'Yêu cầu đang chờ nhân viên thư viện duyệt.':legacyReadyWithoutPayment?'Phiếu chưa có báo giá. Khi tạo phiếu thanh toán, phí hiện tại của sách sẽ được áp dụng; hạn giữ sách không đổi.':r.status==='ready'&&r.payment_status==='unpaid'?'Yêu cầu đã được duyệt. Thanh toán chỉ khả dụng trong thời hạn giữ sách.':r.status==='ready'&&['pending','confirming'].includes(payment?.status)?'Đã ghi nhận giao dịch; đang chờ nhân viên thư viện xác nhận.':'';
+    const payAction=r.status==='ready'&&api.capabilities.reservationWorkflow&&api.capabilities.payments&&Number.isFinite(Date.parse(r.expires_at))&&Date.parse(r.expires_at)>Date.now()
+      ? payment&&['pending','confirming'].includes(payment.status)
+        ? button('Xem thanh toán',`checkout/reservation/${encodeURIComponent(r.id)}`,'secondary-button reservation-payment')
+        : !payment&&(r.payment_status==='unpaid'||legacyReadyWithoutPayment)
+          ? button(legacyReadyWithoutPayment?'Tạo phiếu thanh toán':'Thanh toán',`checkout/reservation/${encodeURIComponent(r.id)}`,'primary-button reservation-payment')
+          : ''
+      : '';
+    const receipt=payment?.status==='paid'?`<section class="profile-card reservation-receipt"><h2>Biên nhận thanh toán</h2><dl class="profile-details">${[['Mã giao dịch',payment.id],['Trạng thái','Đã xác nhận thanh toán'],['Phương thức',payment.method==='cash'?'Tiền mặt':payment.method==='bank_transfer'?'Chuyển khoản mô phỏng':'Khác'],['Số tiền',money(payment.amount)],['Thời điểm xác nhận',payment.confirmed_at?date(payment.confirmed_at):'']].map(([label,value])=>`<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${payment.method==='bank_transfer'&&payment.transfer?.simulated===true?'<p class="fine-print">Thông tin chuyển khoản này là mô phỏng; không chuyển tiền thật.</p>':''}</section>`:'';
+    const linkedLoan=loan?`<section class="profile-card reservation-loan"><h2>Phiếu mượn đã liên kết</h2><dl class="profile-details">${[['Mã phiếu',loan.id],['Trạng thái',loan.status],['Ngày nhận',loan.issued_at?date(loan.issued_at):''],['Hạn trả',loan.due_at?date(loan.due_at):''],['Phí mượn',loan.rental_fee_total==null?'':money(loan.rental_fee_total)],['Đã thu',loan.rental_fee_received==null?'':money(loan.rental_fee_received)]].filter(([,value])=>value!==null&&value!==undefined&&value!=='').map(([label,value])=>`<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl></section>`:'';
+    return intro + `<section class="profile-card reservation-detail-card"><div class="eyebrow">YÊU CẦU ĐẶT TRƯỚC</div><h2>${esc(r.book?.title||'Sách')}</h2><dl class="profile-details">${detail}</dl>${statusMessage?`<p class="fine-print">${esc(statusMessage)}</p>`:''}${payAction}</section>${receipt}${linkedLoan}`;
   }
   async function loadQuote(target) {
     target.loading = true; target.error = '';
@@ -133,9 +192,12 @@ const accountFeatures = (() => {
   }
   function paymentView() {
     const c = checkout;
-    const intro = heading('THANH TOÁN', c?.purpose === 'vip' ? 'Đăng ký thành viên VIP' : 'Thanh toán phí mượn sách','Kiểm tra thông tin trước khi chọn hình thức thanh toán.',button('← Quay lại',c?.purpose === 'vip' ? 'vip' : 'reservations'));
-    if (route?.page !== 'checkout') return intro + unavailable('Vui lòng chọn một yêu cầu đặt sách hoặc gói VIP để tiếp tục.');
+    const purposeTitle = c?.purpose === 'vip' ? 'Đăng ký thành viên VIP' : c?.purpose === 'fine' ? 'Thanh toán khoản phạt' : 'Thanh toán phí mượn sách';
+    const backPage = c?.purpose === 'vip' ? 'vip' : c?.purpose === 'fine' ? 'fines' : 'reservations';
+    const intro = heading('THANH TOÁN', purposeTitle,'Kiểm tra thông tin trước khi chọn hình thức thanh toán.',button('← Quay lại',backPage));
+    if (route?.page !== 'checkout') return intro + unavailable('Vui lòng chọn một khoản cần thanh toán để tiếp tục.');
     if (route.purpose === 'reservation' && !api.capabilities.reservationWorkflow) return intro + unavailable('Quy trình thanh toán đặt trước đang chờ dịch vụ xác nhận của thư viện.');
+    if (route.purpose === 'fine' && !api.capabilities.payments) return intro + unavailable('Thanh toán khoản phạt đang chờ dịch vụ xác nhận của thư viện.');
     if (!c || c.loading) return intro + '<p class="feature-loading" role="status">Đang lấy báo giá…</p>';
     if (!c.quote) return intro + unavailable(c.error || 'Chức năng thanh toán đang được hoàn thiện.', api.capabilities.payments ? 'quote' : '');
     const q = c.quote, payment = c.payment, status = payment ? rules.paymentStatus(payment.status) : 'none';
@@ -146,7 +208,7 @@ const accountFeatures = (() => {
     let transaction = '';
     if (payment) {
       const paymentMessage = status === 'paid'
-        ? (c.purpose === 'vip' ? 'Thư viện đã xác nhận. Quyền lợi VIP được tải từ hồ sơ thành viên.' : 'Phí mượn đã được xác nhận. Vui lòng nhận sách tại thư viện trong thời hạn giữ.')
+        ? (c.purpose === 'vip' ? 'Thư viện đã xác nhận. Quyền lợi VIP được tải từ hồ sơ thành viên.' : c.purpose === 'fine' ? 'Thư viện đã xác nhận khoản phạt đã được thanh toán.' : 'Phí mượn đã được xác nhận. Vui lòng nhận sách tại thư viện trong thời hạn giữ.')
         : status === 'confirming'
           ? 'Đã báo giao dịch. Đang chờ nhân viên thư viện xác nhận.'
           : selected === 'cash'
@@ -159,7 +221,7 @@ const accountFeatures = (() => {
       if (['pending','confirming','unknown'].includes(status)) transaction += `<button class="secondary-button" data-payment-check ${c.busy ? 'disabled' : ''}>${c.busy ? 'Đang kiểm tra…' : 'Kiểm tra trạng thái'}</button>`;
     }
     const reportTransfer = selected === 'bank_transfer' && payment && status === 'pending' && !expired && api.capabilities.payments ? `<button class="secondary-button" data-payment-report ${c.busy ? 'disabled' : ''}>Tôi đã chuyển khoản mô phỏng</button>` : '';
-    return intro + `<div class="checkout-layout"><section class="profile-card checkout-main"><h2>${c.purpose === 'vip' ? 'Gói thành viên của bạn' : 'Thông tin yêu cầu'}</h2><p class="checkout-reference">Mã ${c.purpose === 'vip' ? 'gói' : 'yêu cầu'}: ${esc(c.referenceId)}</p>${q.reservation ? `<p>Hạn nhận sách: <strong>${date(q.reservation.expires_at)}</strong></p>` : ''}<div class="checkout-items">${q.items.map(item=>`<article><div><strong>${esc(item.title)}</strong><small>${item.quantity} × ${money(item.unit_amount)}</small></div><b>${money(item.line_amount)}</b></article>`).join('')}</div><h2>Hình thức thanh toán</h2><div class="payment-methods">${[['bank_transfer','Chuyển khoản mô phỏng','Không chuyển tiền thật. Giao dịch cần thư viện xác nhận thủ công.'],['cash','Tiền mặt tại thư viện','Thanh toán trực tiếp; nhân viên xác nhận đã thu tiền.']].filter(([method])=>q.methods.includes(method)).map(([method,label,description])=>`<label class="payment-method"><input type="radio" name="payment_method" value="${method}" ${selected === method ? 'checked' : ''} ${payment || c.busy || expired ? 'disabled' : ''}><span><strong>${label}</strong><small>${description}</small></span></label>`).join('')}</div>${transaction}${reportTransfer}</section><aside class="summary-card checkout-summary"><h3>Tóm tắt thanh toán</h3><div class="summary-line summary-total"><span>Tổng cộng</span><strong>${money(q.total_amount)}</strong></div><p class="fine-print">Báo giá có hiệu lực đến ${date(q.expires_at)}.</p>${expired && !payment ? unavailable('Báo giá hoặc thời hạn giữ sách đã hết. Vui lòng quay lại danh sách để kiểm tra.') : ''}${!payment ? `<button class="primary-button" data-payment-create ${c.busy || expired || !selected ? 'disabled' : ''}>${c.busy ? 'Đang xử lý…' : selected === 'cash' ? 'Chọn trả tại thư viện' : 'Tạo giao dịch mô phỏng →'}</button>` : ''}<p class="feature-form-error" role="alert">${esc(c.error)}</p>${c.purpose === 'reservation' ? '<p class="fine-print">Thanh toán không thay thế bước nhân viên xác nhận giao sách.</p>' : ''}</aside></div>`;
+    return intro + `<div class="checkout-layout"><section class="profile-card checkout-main"><h2>${c.purpose === 'vip' ? 'Gói thành viên của bạn' : c.purpose === 'fine' ? 'Khoản phạt của bạn' : 'Thông tin yêu cầu'}</h2><p class="checkout-reference">Mã ${c.purpose === 'vip' ? 'gói' : c.purpose === 'fine' ? 'khoản phạt' : 'yêu cầu'}: ${esc(c.referenceId)}</p>${q.reservation ? `<p>Hạn nhận sách: <strong>${date(q.reservation.expires_at)}</strong></p>` : ''}<div class="checkout-items">${q.items.map(item=>`<article><div><strong>${esc(item.title)}</strong><small>${item.quantity} × ${money(item.unit_amount)}</small></div><b>${money(item.line_amount)}</b></article>`).join('')}</div><h2>Hình thức thanh toán</h2><div class="payment-methods">${[['bank_transfer','Chuyển khoản mô phỏng','Không chuyển tiền thật. Giao dịch cần thư viện xác nhận thủ công.'],['cash','Tiền mặt tại thư viện','Thanh toán trực tiếp; nhân viên xác nhận đã thu tiền.']].filter(([method])=>q.methods.includes(method)).map(([method,label,description])=>`<label class="payment-method"><input type="radio" name="payment_method" value="${method}" ${selected === method ? 'checked' : ''} ${payment || c.busy || expired ? 'disabled' : ''}><span><strong>${label}</strong><small>${description}</small></span></label>`).join('')}</div>${transaction}${reportTransfer}</section><aside class="summary-card checkout-summary"><h3>Tóm tắt thanh toán</h3><div class="summary-line summary-total"><span>Tổng cộng</span><strong>${money(q.total_amount)}</strong></div><p class="fine-print">Báo giá có hiệu lực đến ${date(q.expires_at)}.</p>${expired && !payment ? unavailable('Báo giá hoặc thời hạn thanh toán đã hết. Vui lòng quay lại danh sách để kiểm tra.') : ''}${!payment ? `<button class="primary-button" data-payment-create ${c.busy || expired || !selected ? 'disabled' : ''}>${c.busy ? 'Đang xử lý…' : selected === 'cash' ? 'Chọn trả tại thư viện' : 'Tạo giao dịch mô phỏng →'}</button>` : ''}<p class="feature-form-error" role="alert">${esc(c.error)}</p>${c.purpose === 'reservation' ? '<p class="fine-print">Thanh toán không thay thế bước nhân viên xác nhận giao sách.</p>' : ''}</aside></div>`;
   }
   async function updatePayment(check=false) {
     const c = checkout;
@@ -173,13 +235,14 @@ const accountFeatures = (() => {
       if (checkout !== c) return;
       c.payment = payment;
       if (payment.status === 'paid' && c.purpose === 'vip') await refreshMembership();
+      if (payment.status === 'paid' && c.purpose === 'fine' && typeof window.authRefreshReaderData === 'function') await window.authRefreshReaderData();
     } catch (error) { if (checkout === c) c.error = error.message; }
     finally { c.busy = false; if (checkout === c && state.page === 'checkout') render(); }
   }
   async function reportTransfer() {
     const c=checkout;if(!c||c.busy||!c.payment||c.payment.method!=='bank_transfer'||c.payment.status!=='pending'||!api.capabilities.payments)return;
     c.busy=true;c.error='';render();
-    try{const result=await api.reportTransfer(c.payment.id);if(!validPayment(result.payment,c.quote,c.payment.id)||!['confirming','paid'].includes(result.payment.status))throw new Error('Chưa nhận được trạng thái xác nhận từ thư viện.');c.payment=result.payment;if(result.payment.status==='paid'&&c.purpose==='vip')await refreshMembership();}
+    try{const result=await api.reportTransfer(c.payment.id);if(!validPayment(result.payment,c.quote,c.payment.id)||!['confirming','paid'].includes(result.payment.status))throw new Error('Chưa nhận được trạng thái xác nhận từ thư viện.');c.payment=result.payment;if(result.payment.status==='paid'&&c.purpose==='vip')await refreshMembership();if(result.payment.status==='paid'&&c.purpose==='fine'&&typeof window.authRefreshReaderData==='function')await window.authRefreshReaderData();}
     catch(error){c.error=error.message;}
     finally{c.busy=false;if(checkout===c&&state.page==='checkout')render();}
   }
@@ -190,6 +253,7 @@ const accountFeatures = (() => {
     if (state.page === 'profile' || state.page === 'profile-edit') return profile(state.page === 'profile-edit');
     if (state.page === 'vip') return vip();
     if (state.page === 'checkout') return paymentView();
+    if (state.page === 'reservation-detail') return reservationDetailView();
     return help();
   }
   function setMenu(open, focus=false) {
@@ -234,6 +298,7 @@ const accountFeatures = (() => {
   async function retry(target) {
     if (target === 'plans') { await loadPlans(); return; }
     if (target === 'quote' && checkout && !checkout.loading) { loadQuote(checkout); render(); return; }
+    if (target === 'reservation' && route?.page === 'reservation-detail' && !reservationLoading) { await loadReservation(route.id); return; }
     if (target === 'profile') {
       if(authServerData.profileLoading)return;
       const current = epoch;
@@ -280,7 +345,9 @@ const accountFeatures = (() => {
     document.addEventListener('input',event=>{if(event.target.closest('#profile-form'))event.target.closest('form').dataset.dirty='true';});
   }
   return {reset, refreshMembership, resolve, setRoute, enter, view, syncMenu, init, revokeAvatar,
-    handles:page=>['profile','profile-edit','vip','checkout','help'].includes(page),
+    handles:page=>['profile','profile-edit','vip','checkout','help','reservation-detail'].includes(page),
     paymentAction:row=>api.capabilities.reservationWorkflow&&api.capabilities.payments ? reservationPaymentLink(row) : '',
+    reservationViewAction:reservationViewLink,
+    finePaymentAction:finePaymentLink,
   };
 })();

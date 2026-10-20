@@ -14,7 +14,7 @@ class Payment extends Model
     protected $keyType = 'string';
 
     protected $fillable = [
-        'id', 'reader_id', 'quote_id', 'reservation_id', 'purpose', 'method', 'status',
+        'id', 'reader_id', 'quote_id', 'reservation_id', 'fine_id', 'purpose', 'method', 'status',
         'amount', 'currency', 'idempotency_key', 'request_fingerprint', 'transfer_snapshot',
         'reported_at', 'confirmed_at', 'confirmed_by', 'receipt_note',
     ];
@@ -42,6 +42,11 @@ class Payment extends Model
     public function reservation(): BelongsTo
     {
         return $this->belongsTo(Reservation::class);
+    }
+
+    public function fine(): BelongsTo
+    {
+        return $this->belongsTo(Fine::class);
     }
 
     public function confirmedBy(): BelongsTo

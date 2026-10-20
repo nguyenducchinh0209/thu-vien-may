@@ -12,7 +12,7 @@ class PaymentQuote extends Model
     protected $keyType = 'string';
 
     protected $fillable = [
-        'id', 'reader_id', 'purpose', 'reservation_id', 'plan_id', 'total_amount',
+        'id', 'reader_id', 'purpose', 'reservation_id', 'fine_id', 'plan_id', 'total_amount',
         'currency', 'items_snapshot', 'allowed_methods', 'expires_at',
     ];
 
@@ -34,6 +34,11 @@ class PaymentQuote extends Model
     public function reservation(): BelongsTo
     {
         return $this->belongsTo(Reservation::class);
+    }
+
+    public function fine(): BelongsTo
+    {
+        return $this->belongsTo(Fine::class);
     }
 
     public function payment(): \Illuminate\Database\Eloquent\Relations\HasOne

@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreReservationRequest;
 use App\Models\Book;
+use App\Models\Loan;
 use App\Models\LoanItem;
+use App\Models\Payment;
 use App\Models\Reservation;
 use App\Services\LoanIssuanceService;
 use Illuminate\Database\Eloquent\Builder;
@@ -24,6 +26,42 @@ class ReservationController extends Controller
             ->paginate(max(1, min($request->integer('per_page', 10), 50)));
 
         return response()->json($reservations);
+    }
+
+    public function show(Request $request, Reservation $reservation): JsonResponse
+    {
+        abort_unless($reservation->reader_id === $request->user()->id, 404);
+
+        $reservation->load('book:id,title,book_code');
+        $payment = $reservation->payment()->first();
+        $loan = Loan::query()->where('reservation_id', $reservation->id)->first();
+
+        $paymentPayload = $payment?->only([
+            'id', 'purpose', 'method', 'status', 'amount', 'currency',
+            'reported_at', 'confirmed_at',
+        ]);
+        if ($paymentPayload) {
+            $paymentPayload['transfer'] = $payment->transfer_snapshot;
+        }
+
+        return response()->json([
+            'reservation' => [
+                'id' => $reservation->id,
+                'status' => $reservation->status,
+                'quantity' => $reservation->quantity,
+                'ready_at' => $reservation->ready_at?->toISOString(),
+                'expires_at' => $reservation->expires_at?->toISOString(),
+                'payment_status' => $reservation->payment_status,
+                'payment_method' => $reservation->payment_method,
+                'amount' => $reservation->amount,
+                'currency' => $reservation->currency,
+                'book' => $reservation->book?->only(['id', 'title', 'book_code']),
+            ],
+            'payment' => $paymentPayload,
+            'loan' => $loan?->only([
+                'id', 'status', 'issued_at', 'due_at', 'rental_fee_total', 'rental_fee_received',
+            ]),
+        ]);
     }
 
     public function store(StoreReservationRequest $request): JsonResponse

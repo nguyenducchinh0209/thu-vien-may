@@ -193,7 +193,7 @@ class AuthController extends Controller
         $profile['date_of_birth'] = $user->role === 'Độc giả'
             ? $user->readerProfile?->date_of_birth?->format('Y-m-d')
             : $user->date_of_birth?->format('Y-m-d');
-        $profile['avatar_url'] = $avatarPath ? Storage::disk('public')->url($avatarPath) : null;
+        $profile['avatar_url'] = $avatarPath ? '/storage/'.ltrim($avatarPath, '/') : null;
 
         return $profile;
     }

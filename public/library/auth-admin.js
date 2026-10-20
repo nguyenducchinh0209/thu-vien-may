@@ -58,7 +58,7 @@ async function authRefreshReaderData(){
     state.cart=authServerData.cartItems.map(item=>Number(item.book_id));
     authServerData.reservations=(reservations.data||[]).map(row=>({...row,book:row.book?.title||'Sách',created:row.created_at,raw_status:row.status,status:authReservationStatus(row,false)}));
     authServerData.loans=loans.data||[];
-    authServerData.fines=(fines.data||[]).map(row=>({id:row.id,reason:`Trễ hạn ${row.overdue_days} ngày`,created:row.created_at,amount:row.amount,status:row.status==='unpaid'?'Chưa thanh toán':row.status}));
+    authServerData.fines=(fines.data||[]).map(row=>({...row,id:row.id,reason:row.reason||`Trễ hạn ${row.overdue_days} ngày`,created:row.created_at,amount:row.amount,raw_status:row.status,payment_status:row.payment_status||row.payment?.status||null,payment:row.payment||null,status:row.status==='unpaid'?'Chưa thanh toán':row.status==='paid'?'Đã thanh toán':row.status}));
     authServerData.profile=profile.profile||null;
     state.avatar=authServerData.profile?.avatar_url||'';
     const favoriteBooks=await Promise.all(state.favorites.map(async id=>{try{return authNormalizeBook((await authRequest(`/catalog/books/${id}`)).book);}catch{return null;}}));
@@ -180,7 +180,7 @@ function authPersonalPage(kind){
   const title=reservations?'Sách bạn đã đặt trước':'Phí và lịch sử vi phạm';
   const subtitle=reservations?'Theo dõi yêu cầu giữ sách và trạng thái xử lý.':'Theo dõi khoản phạt, lý do và thời điểm thanh toán.';
   const columns=reservations?['Mã yêu cầu','Tên sách','Ngày gửi','Trạng thái']:['Mã khoản','Nội dung','Ngày ghi nhận','Số tiền','Trạng thái'];
-  return `<div class="reader-account-page"><div class="eyebrow">TÀI KHOẢN ĐỘC GIẢ</div><div class="heading-row"><div><h1 class="page-title">${title}</h1><p class="subheading">${subtitle}</p></div>${reservations?'<button class="primary-button" data-page-link="catalog">Tìm sách để đặt trước</button>':''}</div>${rows.length?`<div class="reader-account-list">${rows.map(row=>{const status=String(row.status||'').toLocaleLowerCase('vi'),statusClass=status.includes('chưa thanh toán')||status.includes('chờ')?'pending':status.includes('thanh toán thành công')||status==='đã giữ'?'paid':'done';return `<article class="reader-account-row"><div class="reader-record-icon">${reservations?'▤':'₫'}</div><div class="reader-record-main"><strong>${authEscape(reservations?row.book:row.reason)}</strong><small>${authEscape(row.id)} · ${authEscape(row.created)}</small>${reservations?`<small>${row.payment_method==='bank_transfer'?'Phương thức: Chuyển khoản mô phỏng (không chuyển tiền thật)':row.payment_method==='cash'?'Phương thức: Tiền mặt tại thư viện':'Phương thức: Chưa có thông tin'}${row.amount!=null?` · ${fmtPrice(Number(row.amount))}`:''}${row.expires_at?` · Hạn ${authEscape(new Date(row.expires_at).toLocaleString('vi-VN'))}`:''}</small>`:''}</div>${!reservations?`<b class="reader-fine-amount">${fmtPrice(Number(row.amount)||0)}</b>`:''}<span class="reader-record-status ${statusClass}">${authEscape(row.status)}</span>${reservations?accountFeatures.paymentAction({...row,status:row.raw_status}):''}</article>`}).join('')}</div>`:`<div class="empty-state"><strong>${reservations?'Bạn chưa đặt trước cuốn sách nào':'Bạn chưa có khoản phạt'}</strong><p>${reservations?'Khi gửi yêu cầu đặt trước, trạng thái sẽ xuất hiện tại đây.':'Các khoản phí phát sinh sẽ được lưu trong lịch sử này.'}</p></div>`}${reservations&&window.libraryFeatureApi.capabilities.reservationWorkflow?'':reservations?'<p class="reader-record-note">Thanh toán mới sẽ khả dụng sau khi thư viện kết nối dịch vụ xác nhận giao dịch.</p>':''}</div>`;
+  return `<div class="reader-account-page"><div class="eyebrow">TÀI KHOẢN ĐỘC GIẢ</div><div class="heading-row"><div><h1 class="page-title">${title}</h1><p class="subheading">${subtitle}</p></div>${reservations?'<button class="primary-button" data-page-link="catalog">Tìm sách để đặt trước</button>':''}</div>${rows.length?`<div class="reader-account-list">${rows.map(row=>{const status=String(row.status||'').toLocaleLowerCase('vi'),statusClass=status.includes('chưa thanh toán')||status.includes('chờ')?'pending':status.includes('thanh toán thành công')||status==='đã giữ'||status==='đã thanh toán'?'paid':'done';return `<article class="reader-account-row"><div class="reader-record-icon">${reservations?'▤':'₫'}</div><div class="reader-record-main"><strong>${authEscape(reservations?row.book:row.reason)}</strong><small>${authEscape(row.id)} · ${authEscape(row.created)}</small>${reservations?`<small>${row.payment_method==='bank_transfer'?'Phương thức: Chuyển khoản mô phỏng (không chuyển tiền thật)':row.payment_method==='cash'?'Phương thức: Tiền mặt tại thư viện':'Phương thức: Chưa có thông tin'}${row.amount!=null?` · ${fmtPrice(Number(row.amount))}`:''}${row.expires_at?` · Hạn ${authEscape(new Date(row.expires_at).toLocaleString('vi-VN'))}`:''}</small>`:''}</div>${!reservations?`<b class="reader-fine-amount">${row.amount==null?'Chưa có thông tin':fmtPrice(Number(row.amount))}</b>`:''}<span class="reader-record-status ${statusClass}">${authEscape(row.status)}</span>${reservations?`${accountFeatures.reservationViewAction(row)}${accountFeatures.paymentAction({...row,status:row.raw_status})}`:accountFeatures.finePaymentAction(row)}</article>`}).join('')}</div>`:`<div class="empty-state"><strong>${reservations?'Bạn chưa đặt trước cuốn sách nào':'Bạn chưa có khoản phạt'}</strong><p>${reservations?'Khi gửi yêu cầu đặt trước, trạng thái sẽ xuất hiện ở đây.':'Các khoản phí phát sinh sẽ được lưu trong lịch sử này.'}</p></div>`}${reservations&&window.libraryFeatureApi.capabilities.reservationWorkflow?'':reservations?'<p class="reader-record-note">Thanh toán mới sẽ khả dụng sau khi thư viện kết nối dịch vụ xác nhận giao dịch.</p>':''}</div>`;
 }
 function authLibrarianHome(){
   const loans=opData.loans||[],reservations=opData.reservations||[],returns=opData.returns||[],readers=opData.readers||[];
@@ -192,9 +192,10 @@ function authLibrarianHome(){
   return `<div class="staff-desk"><div class="eyebrow">BÀN LÀM VIỆC · THỦ THƯ</div><div class="heading-row"><div><h1 class="page-title">Chào ${authEscape(state.name)}.</h1><p class="subheading">Các yêu cầu và công việc cần xử lý trong thư viện.</p></div><span class="staff-shift-badge"><i></i> Ca trực hôm nay</span></div><div class="staff-desk-metrics"><article><span class="staff-metric-icon">▤</span><small>Đang mượn</small><strong>${active}</strong><em>phiếu sách</em></article><article><span class="staff-metric-icon amber">◷</span><small>Quá hạn</small><strong>${overdue}</strong><em>cần theo dõi</em></article><article><span class="staff-metric-icon blue">☆</span><small>Chờ đặt trước</small><strong>${waitingReservations}</strong><em>yêu cầu mới</em></article><article><span class="staff-metric-icon rose">↩</span><small>Chờ nhận trả</small><strong>${waitingReturns}</strong><em>sách bàn giao</em></article></div><section class="section"><div class="section-head"><div><span class="pro-section-overline">THAO TÁC NHANH</span><h2 class="section-title">Chọn công việc</h2></div><span class="section-note">Danh sách nghiệp vụ thư viện</span></div><div class="staff-task-grid">${shortcuts.map(([page,title,count,note])=>`<button class="staff-task-card" data-page-link="${page}"><span><strong>${title}</strong><small>${note}</small></span><b>${count}</b><i>→</i></button>`).join('')}</div></section><section class="staff-desk-bottom"><article class="panel"><div class="panel-head"><div><h3>Đặt trước cần duyệt</h3><span class="section-note">${waitingReservations} yêu cầu đang chờ</span></div><button class="link-button" data-page-link="reservations">Xem tất cả ↗</button></div>${reservations.filter(row=>String(row.status).includes('Chờ')).slice(0,3).map(row=>`<div class="admin-queue-row"><i class="activity-dot orange"></i><span><strong>${authEscape(row.reader)}</strong><small>${authEscape(row.book)} · ${authEscape(row.created)}</small></span><span class="status-pill">Chờ duyệt</span></div>`).join('')||'<p class="staff-empty-note">Không có yêu cầu mới.</p>'}</article><article class="staff-tip-card"><span class="pro-section-overline">GỢI Ý CA TRỰC</span><h3>Nhận trả sách đúng quy trình</h3><p>Kiểm tra tình trạng sách, xác nhận ngày nhận và ghi nhận phí trễ hạn nếu có.</p><button class="secondary-button" data-page-link="returns">Mở danh sách trả sách →</button></article></section><p class="admin-data-note">Các số liệu trên lấy từ dữ liệu trình diễn của giao diện.</p></div>`;
 }
 
-const authPrivatePages=new Set(['shelf','cart','profile','profile-edit','vip','checkout','reservations','payments','loans','returns','readers','authors','accounts','inventory','fines','librarian-home']);
+const authPrivatePages=new Set(['shelf','cart','profile','profile-edit','vip','checkout','reservation-detail','reservations','payments','loans','returns','readers','authors','accounts','inventory','fines','librarian-home']);
 const authLibrarianPages=new Set(['librarian-home','reservations','payments','loans','returns','readers','inventory']);
 const authAdminPages=new Set(['admin','accounts','authors']);
+function authIsLibrarianPage(page){return authLibrarianPages.has(page)&&!(page==='reservations'&&authSession?.role==='Độc giả');}
 function authSetIdentity(session){
   authPersistAccountData();
   if(authSession?.id!==session.id){authServerData.profile=null;authServerData.profileLoading=true;authServerData.profileError='';authServerData.reservations=[];accountFeatures.reset(session);}
@@ -205,6 +206,11 @@ function authSetIdentity(session){
 }
 function authGo(page){
   const feature=accountFeatures.resolve(page);
+  if(feature?.page==='reservation-detail'){
+    if(!authSession){sessionStorage.setItem('may-next-route',page);go('login');return;}
+    if(authSession.role!=='Độc giả'){toast('Chi tiết đặt trước dành cho tài khoản độc giả.');return;}
+    accountFeatures.setRoute(page);state.page=feature.page;history.pushState(null,'',`#${page}`);render();window.scrollTo({top:0,behavior:'smooth'});return;
+  }
   if(feature?.page==='checkout'){
     if(!authSession){sessionStorage.setItem('may-next-route',page);go('login');return;}
     if(authSession.role!=='Độc giả'){toast('Thanh toán dành cho tài khoản độc giả.');return;}
@@ -218,7 +224,7 @@ function authGo(page){
   }
   if(authPrivatePages.has(page)&&!authSession){sessionStorage.setItem('may-next-route',page);page='login';}
   if(authAdminPages.has(page)&&authSession?.role!=='Admin'){toast('Chức năng này chỉ dành cho Admin.');page=authSession?'home':'login';}
-  if(authLibrarianPages.has(page)&&authSession?.role==='Độc giả'){toast('Khu vực này dành cho nhân viên thư viện.');page='home';}
+  if(authIsLibrarianPage(page)&&authSession?.role==='Độc giả'){toast('Khu vực này dành cho nhân viên thư viện.');page='home';}
   if(page==='home'&&authSession?.role==='Admin')page='admin';
   if(page==='home'&&authSession?.role==='Thủ thư')page='librarian-home';
   if(page==='librarian-home'&&authSession?.role==='Admin')page='admin';
@@ -233,7 +239,7 @@ render=function(){
   if(state.page==='home'&&authSession?.role==='Thủ thư'){state.page='librarian-home';history.replaceState(null,'','#librarian-home');}
   if(!authPageLabels[state.page]&&authPrivatePages.has(state.page)&&!authSession){sessionStorage.setItem('may-next-route',state.page);state.page='login';history.replaceState(null,'','#login');}
   if(authAdminPages.has(state.page)&&authSession?.role!=='Admin'){state.page=authSession?'home':'login';history.replaceState(null,'','#'+state.page);}
-  if(authLibrarianPages.has(state.page)&&authSession?.role==='Độc giả'){state.page='home';history.replaceState(null,'','#home');}
+  if(authIsLibrarianPage(state.page)&&authSession?.role==='Độc giả'){state.page='home';history.replaceState(null,'','#home');}
   if(state.page==='librarian-home'&&authSession?.role==='Admin'){state.page='admin';history.replaceState(null,'','#admin');}
   if(['vip','checkout'].includes(state.page)&&authSession&&authSession.role!=='Độc giả'){state.page='profile';history.replaceState(null,'','#profile');}
   const authMode=!!authPageLabels[state.page];
@@ -246,7 +252,7 @@ render=function(){
   else {document.body.classList.remove('auth-mode');authBaseRender();}
   if(state.page==='cart'&&authSession?.role==='Độc giả'&&state.cart.length){
     const summary=app.querySelector('.summary-card');
-    if(summary)summary.insertAdjacentHTML('afterbegin',window.libraryFeatureApi.capabilities.reservationWorkflow&&window.libraryFeatureApi.capabilities.payments?`<fieldset class="reservation-method-picker"><legend>Phương thức dự kiến</legend><label><input type="radio" name="reservation_method" value="bank_transfer" checked> Chuyển khoản mô phỏng (không chuyển tiền thật)</label><label><input type="radio" name="reservation_method" value="cash"> Tiền mặt tại thư viện</label><small>Nhân viên duyệt yêu cầu trước; bạn chỉ thanh toán sau khi yêu cầu được duyệt.</small></fieldset>`:`<div class="feature-notice reservation-workflow-note" role="status"><span aria-hidden="true">◷</span><div><strong>Thanh toán sau khi duyệt</strong><p>Yêu cầu mới sẽ hiển thị phương thức thanh toán sau khi dịch vụ được bật.</p></div></div>`);
+    if(summary)summary.insertAdjacentHTML('afterbegin',window.libraryFeatureApi.capabilities.reservationWorkflow&&window.libraryFeatureApi.capabilities.payments?`<fieldset class="reservation-method-picker"><legend>Phương thức thanh toán</legend><label><input type="radio" name="reservation_method" value="bank_transfer" checked> Mã QR</label><label><input type="radio" name="reservation_method" value="cash"> Tiền mặt tại thư viện</label></fieldset>`:`<div class="feature-notice reservation-workflow-note" role="status"><span aria-hidden="true">◷</span><div><strong>Thanh toán sau khi duyệt</strong><p>Yêu cầu mới sẽ hiển thị phương thức thanh toán sau khi dịch vụ được bật.</p></div></div>`);
   }
   if(typeof syncSidebar==='function')syncSidebar();
   if(state.page==='book-detail'){const community=document.getElementById('book-community');if(community)community.innerHTML=authCommunityForms();}
@@ -557,8 +563,14 @@ document.addEventListener('input',event=>{if(event.target.closest('#auth-form'))
 function authSyncRoute(){
   const [routeValue,query='']=location.hash.slice(1).split('?');let route=routeValue||'home';
   const feature=accountFeatures.resolve(route);accountFeatures.setRoute(route);
+  if(feature?.page==='reservation-detail'){
+    if(!authSession){sessionStorage.setItem('may-next-route',route);state.page='login';history.replaceState(null,'','#login');render();return;}
+    if(authSession.role!=='Độc giả'){toast('Chi tiết đặt trước dành cho tài khoản độc giả.');route=authSession.role==='Admin'?'admin':'librarian-home';}
+    else {state.page='reservation-detail';render();return;}
+  }
   if(feature?.page==='checkout'){
     if(!authSession){sessionStorage.setItem('may-next-route',route);state.page='login';history.replaceState(null,'','#login');render();return;}
+    if(authSession.role!=='Độc giả'){toast('Thanh toán dành cho tài khoản độc giả.');route=authSession.role==='Admin'?'admin':'librarian-home';state.page=route;render();return;}
     state.page='checkout';render();return;
   }
   if(route==='catalog'){const params=new URLSearchParams(query);state.query=params.get('q')||'';state.catalogDraft=state.query;state.catalogPage=Math.max(1,Number(params.get('page'))||1);}
@@ -566,7 +578,7 @@ function authSyncRoute(){
   if(dynamic){proSyncRoute();return;}
   if(authPrivatePages.has(route)&&!authSession){sessionStorage.setItem('may-next-route',route);route='login';}
   if(authAdminPages.has(route)&&authSession?.role!=='Admin')route=authSession?'home':'login';
-  if(authLibrarianPages.has(route)&&authSession?.role==='Độc giả')route='home';
+  if(authIsLibrarianPage(route)&&authSession?.role==='Độc giả')route='home';
   if(route==='librarian-home'&&authSession?.role==='Admin')route='admin';
   state.page=route;render();
 }
@@ -581,7 +593,7 @@ else if(routeAtAuthStartMatch){proSyncRoute();}
 else if(authPageLabels[routeAtAuthStart]){state.page=routeAtAuthStart;render();}
 else if(authPrivatePages.has(routeAtAuthStart)&&!authSession){sessionStorage.setItem('may-next-route',routeAtAuthStart);state.page='login';history.replaceState(null,'','#login');render();}
 else if(authAdminPages.has(routeAtAuthStart)&&authSession?.role!=='Admin'){state.page=authSession?'home':'login';history.replaceState(null,'','#'+state.page);render();}
-else if(authLibrarianPages.has(routeAtAuthStart)&&authSession?.role==='Độc giả'){state.page='home';history.replaceState(null,'','#home');render();}
+else if(authIsLibrarianPage(routeAtAuthStart)&&authSession?.role==='Độc giả'){state.page='home';history.replaceState(null,'','#home');render();}
 else if(routeAtAuthStart==='home'&&authSession?.role==='Admin'){state.page='admin';history.replaceState(null,'','#admin');render();}
 else if(routeAtAuthStart==='home'&&authSession?.role==='Thủ thư'){state.page='librarian-home';history.replaceState(null,'','#librarian-home');render();}
 else if(labels[routeAtAuthStart]){state.page=routeAtAuthStart;render();}

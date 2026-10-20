@@ -62,6 +62,51 @@ test('approved unpaid reservations are not shown as collected or confirmable', (
   assert.match(renderOperationRows('reservations', [{id:41, reader:'Reader One', book:'Book One', status:'Chờ thu tiền mặt'}]), /data-op-confirm-payment="41"/);
 });
 
+test('reader reservation navigation remains personal while staff reservation routing stays protected', () => {
+  const start = authAdminSource.indexOf('const authLibrarianPages=');
+  const end = authAdminSource.indexOf('\nfunction authSetIdentity', start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const routeSource = authAdminSource.slice(start, end);
+  const context = vm.createContext({authSession:{role:'Độc giả'}});
+  vm.runInContext(`${routeSource}; globalThis.isStaffPage=authIsLibrarianPage;`, context);
+  assert.equal(context.isStaffPage('reservations'), false);
+  assert.equal(context.isStaffPage('loans'), true);
+  context.authSession = {role:'Thủ thư'};
+  assert.equal(context.isStaffPage('reservations'), true);
+  assert.equal(context.isStaffPage('loans'), true);
+
+  assert.match(sidebarSource, /id="reader-nav"[\s\S]*?href="#reservations"[^>]*data-page="reservations"/);
+  assert.match(authAdminSource, /if\(authIsLibrarianPage\(route\)&&authSession\?\.role==='Độc giả'\)route='home';/);
+  assert.match(authAdminSource, /if\(authIsLibrarianPage\(state\.page\)&&authSession\?\.role==='Độc giả'\)/);
+});
+
+test('reservation request uses the concise QR label and removes redundant cart fee notes', () => {
+  assert.match(authAdminSource, /name="reservation_method" value="bank_transfer" checked> Mã QR/);
+  assert.match(authAdminSource, /<legend>Phương thức thanh toán<\/legend>/);
+  assert.doesNotMatch(authAdminSource, /Nhân viên duyệt yêu cầu trước; bạn chỉ thanh toán sau khi yêu cầu được duyệt\./);
+
+  const start = professionalSource.indexOf('function proCart(){');
+  const end = professionalSource.indexOf('\nfunction ', start + 1);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const cartSource = professionalSource.slice(start, end);
+  const context = vm.createContext({
+    state: {},
+    authServerData: {cartItems:[{id:1, book_id:7, quantity:2, book:{id:7,title:'A Book',author:'An Author',rental_fee:5000}}]},
+    proFindBook: () => null,
+    authNormalizeBook: book => book,
+    miniCover: () => '<div></div>',
+    escapeHTML: value => String(value),
+    fmtPrice: value => `${value}đ`,
+  });
+  vm.runInContext(`${cartSource}; globalThis.renderCart = proCart;`, context);
+  const html = context.renderCart();
+  assert.match(html, /data-checkout/);
+  assert.match(html, /Gửi yêu cầu đặt trước/);
+  assert.doesNotMatch(html, /Phí mượn theo cấu hình|Máy chủ xác nhận|Chưa thu tiền ở bước gửi yêu cầu/);
+});
+
 test('inventory exposes the protected upload form only for authenticated staff rows with a book id', () => {
   const inventory = [{id:'TV-1', book_id:17, book:'Book One', status:'Đang lưu hành'}];
   assert.match(renderOperationRows('inventory', inventory, 'Admin'), /href="\/staff\/books\/17\/epub\/upload"/);

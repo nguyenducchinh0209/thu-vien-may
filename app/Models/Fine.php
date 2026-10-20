@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Fine extends Model
 {
@@ -45,5 +46,10 @@ class Fine extends Model
     public function payments(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(FinePayment::class);
+    }
+
+    public function checkoutPayment(): HasOne
+    {
+        return $this->hasOne(Payment::class)->latestOfMany();
     }
 }
