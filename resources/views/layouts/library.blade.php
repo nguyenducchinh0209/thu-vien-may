@@ -10,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
-    @foreach (['styles.css', 'operations.css', 'professional.css', 'search-community.css'] as $stylesheet)
+    @foreach (['styles.css', 'operations.css', 'professional.css', 'search-community.css', 'account-features.css', 'sidebar-responsive.css'] as $stylesheet)
         <link rel="stylesheet" href="{{ asset('library/' . $stylesheet) }}?v={{ filemtime(public_path('library/' . $stylesheet)) }}">
     @endforeach
     @stack('styles')
@@ -32,7 +32,7 @@
     @include('library.partials.dialogs')
 
     {{-- Thứ tự script giữ nguyên để các phần mở rộng giao diện hoạt động đúng. --}}
-    @foreach (['app.js', 'operations.js', 'professional.js', 'auth-admin.js'] as $script)
+    @foreach (['app.js', 'operations.js', 'professional.js', 'feature-api.js', 'account-features.js', 'auth-admin.js'] as $script)
         <script src="{{ asset('library/' . $script) }}?v={{ filemtime(public_path('library/' . $script)) }}" defer></script>
     @endforeach
     @stack('scripts')

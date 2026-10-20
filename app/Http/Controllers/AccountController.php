@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -35,7 +36,7 @@ class AccountController extends Controller
             'is_locked' => ['sometimes', 'boolean'],
         ]);
         $data['email'] = mb_strtolower($data['email']);
-        $account = User::create($data);
+        $account = DB::transaction(fn () => User::create($data));
 
         return response()->json(['message' => 'Đã tạo tài khoản.', 'account' => $account], 201);
     }
@@ -58,7 +59,44 @@ class AccountController extends Controller
         if (array_key_exists('password', $data) && $data['password'] === null) {
             unset($data['password']);
         }
-        DB::transaction(fn () => $account->update($data));
+        $previousRole = $account->role;
+        $nextRole = $data['role'] ?? $previousRole;
+        DB::transaction(function () use ($account, $data, $previousRole, $nextRole): void {
+            if (isset($data['password'])) {
+                $data['remember_token'] = Str::random(60);
+                $data['auth_version'] = $account->auth_version + 1;
+            }
+
+            $account->update($data);
+
+            if ($previousRole === 'Độc giả' && $nextRole !== 'Độc giả') {
+                $profile = $account->readerProfile;
+                if ($profile) {
+                    $staffProfile = [];
+                    foreach (['phone', 'address', 'date_of_birth', 'avatar_path'] as $field) {
+                        $staffProfile[$field] = $profile->{$field};
+                    }
+                    if ($staffProfile) {
+                        $account->update($staffProfile);
+                    }
+                }
+            }
+
+            if ($nextRole === 'Độc giả') {
+                $profile = $account->readerProfile()->firstOrNew();
+                if (! $profile->exists) {
+                    $profile->reader_code = 'RD'.str_pad((string) $account->id, 6, '0', STR_PAD_LEFT);
+                }
+                if ($previousRole !== 'Độc giả') {
+                    foreach (['phone', 'address', 'date_of_birth', 'avatar_path'] as $field) {
+                        $profile->{$field} = $account->{$field};
+                    }
+                }
+                if (! $profile->exists || $profile->isDirty()) {
+                    $profile->save();
+                }
+            }
+        });
 
         return response()->json(['message' => 'Đã cập nhật tài khoản.', 'account' => $account->fresh()]);
     }

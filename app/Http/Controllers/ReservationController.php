@@ -149,19 +149,24 @@ class ReservationController extends Controller
                 'status' => 'ready',
                 'approved_by' => $request->user()->id,
                 'ready_at' => $readyAt,
-                'expires_at' => $readyAt->copy()->addDays(3),
+                'expires_at' => $readyAt->copy()->addHours(48),
             ]);
         });
 
         return response()->json([
-            'message' => 'Đã duyệt; sách được giữ trong 3 ngày.',
+            'message' => 'Đã duyệt; sách được giữ trong 48 giờ.',
             'reservation' => $reservation->fresh()->load(['reader:id,name,email', 'book:id,title,book_code']),
         ]);
     }
 
     public function fulfill(Request $request, Reservation $reservation, LoanIssuanceService $loans): JsonResponse
     {
-        $loan = $loans->issueReservation($request->user(), $reservation->id);
+        $payment = $request->validate([
+            'rental_fee_payment.amount' => ['required', 'numeric', 'min:0', 'max:9999999999.99', 'decimal:0,2'],
+            'rental_fee_payment.method' => ['required', 'string', 'in:cash,bank_transfer,manual'],
+            'rental_fee_payment.receipt_note' => ['nullable', 'string', 'max:500'],
+        ])['rental_fee_payment'];
+        $loan = $loans->issueReservation($request->user(), $reservation->id, $payment);
 
         return response()->json([
             'message' => 'Đã tạo phiếu mượn từ yêu cầu đặt trước.',

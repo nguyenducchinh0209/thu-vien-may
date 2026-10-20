@@ -19,7 +19,10 @@ class ReaderCartController extends Controller
     public function show(Request $request): JsonResponse
     {
         return response()->json([
-            'cart' => $this->cartFor($request->user())->load('items.book:id,title,book_code,cover_image_path,total_quantity'),
+            'cart' => $this->cartFor($request->user())->load([
+                'items.book:id,title,book_code,cover_image_path,total_quantity,rental_fee',
+                'items.book.authors:id,name',
+            ]),
         ]);
     }
 

@@ -40,6 +40,7 @@ class ReservationFineCommunityTest extends TestCase
         $this->actingAs($staff)->postJson('/staff/loans', [
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 1]],
+            'rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash'],
         ])->assertUnprocessable()
             ->assertJsonValidationErrors('items.0.quantity');
 
@@ -49,7 +50,7 @@ class ReservationFineCommunityTest extends TestCase
             ->assertJsonPath('reservation.status', 'ready');
 
         $reservation = Reservation::findOrFail($reservationId);
-        $this->assertSame(now()->addDays(3)->toDateTimeString(), $reservation->expires_at->toDateTimeString());
+        $this->assertSame(now()->addHours(48)->toDateTimeString(), $reservation->expires_at->toDateTimeString());
 
         $this->getJson('/staff/inventory?q=Reserved')
             ->assertOk()
@@ -58,6 +59,7 @@ class ReservationFineCommunityTest extends TestCase
         $this->actingAs($staff)->postJson('/staff/loans', [
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 1]],
+            'rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash'],
         ])->assertUnprocessable()
             ->assertJsonValidationErrors('items.0.quantity');
 
@@ -66,7 +68,7 @@ class ReservationFineCommunityTest extends TestCase
             ->assertJsonPath('data.0.id', $reservationId);
 
         $this->actingAs($staff)
-            ->postJson("/staff/reservations/{$reservationId}/fulfill")
+            ->postJson("/staff/reservations/{$reservationId}/fulfill", ['rental_fee_payment' => ['amount' => '10000.00', 'method' => 'cash']])
             ->assertCreated()
             ->assertJsonPath('loan.reader.id', $reader->id)
             ->assertJsonPath('loan.items.0.quantity', 2);
@@ -102,7 +104,7 @@ class ReservationFineCommunityTest extends TestCase
             ->assertJsonPath('data.0.id', $reservation->id);
 
         $this->assertDatabaseHas('reservations', ['id' => $reservation->id, 'status' => 'expired']);
-        $this->postJson("/staff/reservations/{$reservation->id}/fulfill")
+        $this->postJson("/staff/reservations/{$reservation->id}/fulfill", ['rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash']])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('reservation_id');
         $this->getJson('/staff/inventory?q=Expiring')
@@ -158,6 +160,8 @@ class ReservationFineCommunityTest extends TestCase
         $cart = $this->getJson('/my/cart')
             ->assertOk()
             ->assertJsonCount(2, 'cart.items')
+            ->assertJsonPath('cart.items.0.book.title', 'Cart book')
+            ->assertJsonPath('cart.items.0.book.rental_fee', '5000.00')
             ->json('cart.items');
 
         $this->postJson('/my/cart/reservations')
@@ -185,6 +189,7 @@ class ReservationFineCommunityTest extends TestCase
         $loanResponse = $this->actingAs($staff)->postJson('/staff/loans', [
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 2]],
+            'rental_fee_payment' => ['amount' => '10000.00', 'method' => 'cash'],
         ])->assertCreated();
         $loanId = $loanResponse->json('loan.id');
         $loanItemId = $loanResponse->json('loan.items.0.id');
@@ -200,7 +205,7 @@ class ReservationFineCommunityTest extends TestCase
             'items' => [['loan_item_id' => $loanItemId, 'quantity' => 2]],
         ])
             ->assertOk()
-            ->assertJsonPath('fines.0.amount', '2000.00');
+            ->assertJsonPath('fines.0.amount', '6000.00');
 
         $fineId = $returnResponse->json('fines.0.id');
         $this->assertDatabaseHas('fines', [
@@ -208,14 +213,14 @@ class ReservationFineCommunityTest extends TestCase
             'reader_id' => $reader->id,
             'overdue_days' => 1,
             'quantity' => 2,
-            'daily_rate' => 1000,
+            'daily_rate' => 3000,
             'status' => 'unpaid',
         ]);
 
         $this->actingAs($reader)->getJson('/my/fines')
             ->assertOk()
             ->assertJsonPath('data.0.id', $fineId)
-            ->assertJsonPath('data.0.amount', '2000.00');
+            ->assertJsonPath('data.0.amount', '6000.00');
 
         $this->actingAs($staff)
             ->patchJson("/staff/fines/{$fineId}/waive", ['reason' => 'Duyệt miễn do sự cố'])

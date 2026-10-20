@@ -1,0 +1,58 @@
+.menu-toggle-button{display:grid;flex:0 0 36px;margin-left:-8px;color:#43564a}
+.sidebar-backdrop{display:none}
+.sidebar{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#ffffff35 transparent}
+.side-nav{flex:0 0 auto}
+.sidebar-bottom{margin-top:auto;padding-top:24px}
+.main-area{min-width:0;transition:margin-left .2s ease}
+.page-content{min-width:0}
+.ops-table-wrap,.list-card,.reader-account-list{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.account-menu,.support-panel,.modal-card{min-width:0;max-height:calc(100dvh - 32px);overflow-y:auto;overscroll-behavior:contain}
+.reservation-method-picker{display:grid;gap:11px;padding:15px;margin:0 0 14px;border:1px solid var(--line);border-radius:11px;background:#fff}
+.reservation-method-picker legend{padding:0 5px;font-size:12px;font-weight:700;color:var(--forest)}
+.reservation-method-picker label{display:flex;align-items:center;gap:9px;font-size:12px}
+.reservation-method-picker input{accent-color:var(--forest)}
+.reservation-method-picker small{font-size:10px;line-height:1.6;color:var(--muted)}
+.reservation-workflow-note{margin:0 0 15px;padding:14px;font-size:11px}
+.reader-record-main>small+small{display:block;line-height:1.6;margin-top:4px}
+@media(min-width:821px){
+  .sidebar{transition:width .2s ease,padding .2s ease}
+  .main-area{margin-left:250px}
+  body.sidebar-collapsed .sidebar{width:76px;padding:22px 10px 14px;overflow-x:visible}
+  body.sidebar-collapsed .main-area{margin-left:76px}
+  body.sidebar-collapsed .brand{justify-content:center;padding:0 0 30px}
+  body.sidebar-collapsed .brand-copy,body.sidebar-collapsed .side-caption,body.sidebar-collapsed .nav-link>span:not(.nav-icon):not(.nav-count),body.sidebar-collapsed .help-card,body.sidebar-collapsed .profile-copy,body.sidebar-collapsed .sidebar-profile .more{display:none}
+  body.sidebar-collapsed .side-nav{gap:7px}
+  body.sidebar-collapsed .nav-link{justify-content:center;padding:12px 8px;position:relative}
+  body.sidebar-collapsed .nav-link::after{content:attr(aria-label);position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);padding:8px 10px;border-radius:7px;background:#173d35;color:white;font-size:11px;white-space:nowrap;opacity:0;pointer-events:none;z-index:40;box-shadow:0 5px 20px #14251d35}
+  body.sidebar-collapsed .nav-link:hover::after,body.sidebar-collapsed .nav-link:focus-visible::after{opacity:1}
+  body.sidebar-collapsed .nav-count{position:absolute;right:1px;top:1px;min-width:16px;height:16px;font-size:8px}
+  body.sidebar-collapsed .sidebar-profile{justify-content:center;padding:14px 0 0}
+  body.sidebar-collapsed .avatar{flex:0 0 34px}
+}
+@media(max-width:820px){
+  .menu-toggle-button{margin-left:-8px}
+  .sidebar{width:min(310px,86vw);height:100dvh;max-height:100dvh;padding-top:max(20px,env(safe-area-inset-top));transform:translateX(-105%);transition:transform .22s ease;box-shadow:15px 0 35px #152d2240}
+  .sidebar.open{transform:translateX(0)}
+  .main-area,body.sidebar-collapsed .main-area{margin-left:0}
+  body.sidebar-open{overflow:hidden}
+  .sidebar-backdrop{position:fixed;inset:0;z-index:19;border:0;padding:0;background:#10251e80;backdrop-filter:blur(2px)}
+  .sidebar-backdrop.is-visible{display:block}
+  .sidebar .brand{padding-bottom:26px}
+}
+@media(max-height:700px){
+  .sidebar{padding-top:16px;padding-bottom:12px}
+  .brand{padding-bottom:20px}
+  .side-caption-spaced{margin-top:17px}
+  .nav-link{padding-top:9px;padding-bottom:9px}
+  .sidebar-bottom{padding-top:12px}
+  .help-card{padding:12px;margin-bottom:9px}
+  .help-card p{margin:5px 0 8px}
+  .sidebar-profile{padding-top:10px}
+}
+@media(max-width:620px){
+  .sidebar-backdrop{z-index:19}
+  .main-area{overflow-x:clip}
+  .page-content{overflow-wrap:anywhere}
+  .ops-table-wrap .ops-table{min-width:780px}
+  .transfer-details dl{min-width:0}
+}

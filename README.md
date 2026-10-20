@@ -1,5 +1,9 @@
 # Library setup guide
 
+## Frontend and backend handoff
+
+See [Hướng dẫn backend: API, database và dữ liệu cũ](docs/BACKEND-HANDOFF.md) for the pending reservation payment workflow, migration design, data reconciliation and API acceptance criteria. See [Frontend API contracts](docs/frontend-feature-contracts.md) for the optional client configuration. The new payment/VIP/chat APIs are not implemented in this branch; optional capabilities remain disabled until their backend contracts are ready.
+
 ## Environment
 
 - Laragon on Windows
@@ -66,7 +70,7 @@ Repeated seeding preserves existing accounts, passwords and catalog records. Dem
 
 ## Database and models
 
-- User: existing login fields, name and role. Existing role values remain Admin, Thủ thư and Độc giả for compatibility. Reader accounts are soft-deleted so future loan history remains linked.
+- User: login fields, name, role and nullable phone, address, date_of_birth and avatar_path for staff profiles. Existing role values remain Admin, Thủ thư and Độc giả for compatibility. Reader accounts are soft-deleted so future loan history remains linked.
 - ReaderProfile: one per reader, unique user_id and reader_code, optional phone, address, date_of_birth and avatar_path. The full name remains in users.name to avoid duplicate data.
 - Author: name, optional biography; soft deletion.
 - Book: unique book_code, title, optional unique ISBN, description, publisher, publication_year, edition and cover_image_path; total_quantity and rental_fee in VND; soft deletion.
@@ -74,8 +78,8 @@ Repeated seeding preserves existing accounts, passwords and catalog records. Dem
 
 Relations: User::readerProfile(), ReaderProfile::user(), Book::authors(), Author::books().
 Reader codes are generated from the unique user ID as RD000001; gaps are expected.
-New reader accounts created through Eloquent automatically receive a profile. Registration writes both records in one transaction. The migration also creates profiles for existing readers.
-Create reader accounts through Eloquent, with the reader role set at creation; raw inserts and later role changes do not create profiles automatically.
+New reader accounts created through Eloquent automatically receive a profile. Registration and staff role conversion write the account and profile in one transaction. The migration also creates profiles for existing readers. A missing legacy reader profile is created with its required reader code when the reader updates their profile.
+The signed-in `/my/profile` endpoint supports all active roles. Reader contact data remains in `reader_profiles`; Admin and Librarian contact data is stored on `users`. Role changes carry the current profile values, and the staff-profile migration backfills existing converted accounts that still have a ReaderProfile.
 Book codes such as BK000001 identify a title/edition, not an individual physical copy. Supply a unique code when creating a book and retain it when editing its title. Handle duplicate-code validation in the CRUD endpoint; never generate codes by counting rows.
 A different edition gets a separate record. total_quantity counts all physical copies of the title. rental_fee is the per-copy fee for a 14-day loan; store it as a decimal, not a float.
 Validate nonnegative quantity/fee, field lengths, ISBN uniqueness and sensible publication years in CRUD requests. Do not expose profile identifiers for mass assignment.
@@ -90,25 +94,28 @@ erDiagram
 
 ## Scope
 
-This foundation contains accounts, reader profiles, authors, books and sample data. Existing authentication and frontend are retained. Staff-only JSON CRUD endpoints are available for books, authors and readers under `/staff`; the frontend catalog and staff screens still need to be connected to them.
+The library includes accounts, reader profiles, authors, books, loans, reservations, payments and sample data. Staff-only JSON CRUD endpoints are available under `/staff`; the public catalog and reader/staff screens use the application endpoints for the listed workflows.
 
 Staff catalog and reader endpoints require authentication and the `Admin` or `Thủ thư` role. All list endpoints support `q` search and pagination using `page` and `per_page` (maximum 50):
 
 - Books: `/staff/books` — search title, code, ISBN, publisher or author; create/update accepts `author_ids` and an optional `cover_image` upload.
 - Authors: `/staff/authors` — search by name; deleting an author is soft deletion and preserves its book links.
 - Readers: `/staff/readers` — search name, email, reader code or phone; create requires a confirmed password and always assigns the `Độc giả` role. Optional avatar uploads use the `avatar` field. Deleting a reader is soft deletion; profile and future history are retained.
-- Loans: `/staff/loans` — staff issue a 14-day loan to a reader with one or more book quantities. `POST /staff/loans/{id}/returns` records full or partial returns and keeps each return event in history.
+- Loans: `/staff/loans` — staff issue a 14-day loan to a reader with one or more distinct book quantities. Before issuance, staff confirm collection of the exact server-calculated rental total; each loan stores the fee snapshot, amount, collection time, staff member, method and receipt note. `POST /staff/loans/{id}/returns` records full or partial returns and keeps each return event in history.
 - Inventory: `GET /staff/inventory` — lists total, currently-on-loan and available copy counts. Availability subtracts copies that have not yet been returned on active loans.
 - Public catalog: `GET /catalog/books` and `GET /catalog/books/{id}` — public search/details with author and rating summary.
 - Reader loan history: `GET /my/loans` — a reader's loans, return history and current overdue indicator.
 - Reader cart: `/my/cart` and `/my/cart/items` support listing, adding, updating and removing items. `POST /my/cart/reservations` submits all cart items as queued reservations atomically and clears the cart only on success.
-- Reservations: readers use `POST /reservations`, `GET /my/reservations` and `DELETE /reservations/{id}`. Staff use `/staff/reservations`; approve with `POST /staff/reservations/{id}/ready`, then issue the loan with `POST /staff/reservations/{id}/fulfill`. Requests are queued FIFO per title; an approved quantity is held for 3 days.
-- Fines: `GET /my/fines` for readers; staff list via `GET /staff/fines`. A late return creates an unpaid fine at 1,000 VND per returned copy per late calendar day. Admins may waive an unpaid fine with a reason. Payment capture/history is intentionally left for the payment integration.
+- Reservations: readers use `POST /reservations`, `GET /my/reservations` and `DELETE /reservations/{id}`. Staff use `/staff/reservations`; approve with `POST /staff/reservations/{id}/ready`, then record the exact rental fee and issue the loan with `POST /staff/reservations/{id}/fulfill`. Requests are queued FIFO per title; an approved quantity is held for 48 hours.
+- Fines: `GET /my/fines` for readers; staff list via `GET /staff/fines`. A late return creates an unpaid fine at 3,000 VND per returned copy per late calendar day. Admins may waive an unpaid fine with a reason. Staff record manual fine payments with `POST /staff/fines/{id}/payments`.
+- Password recovery: `POST /auth/forgot-password` sends a neutral response for known and unknown addresses. The reset link opens the built-in password form at `/password/reset/{token}`. The default local mailer is `log`; inspect Laravel's application log for the reset email during local development. Configure a delivery mailer before expecting email to reach readers.
 - Reviews and comments: `GET /books/{id}/reviews`, `GET /books/{id}/comments`; signed-in readers can post, edit or delete their own review and post/delete their own comments. Ratings publish immediately and one review per reader per book is allowed.
 - Book suggestions: readers use `POST /book-suggestions` and `GET /my/book-suggestions`; staff list at `/staff/book-suggestions` and update status to `approved`, `rejected` or `ordered`.
 
 For browser access to uploaded book covers and reader avatars, run `php artisan storage:link` once per local setup.
-The scheduled `reservations:expire` command marks ready holds past their 3-day pickup window as expired. Run Laravel's scheduler in deployment (for local testing, `php artisan schedule:work`). Current inventory subtracts both outstanding copies on active loans and non-expired ready reservations from `total_quantity`.
+The scheduled `reservations:expire` command marks ready holds past their 48-hour pickup window as expired. Run Laravel's scheduler in deployment (for local testing, `php artisan schedule:work`). Current inventory subtracts both outstanding copies on active loans and non-expired ready reservations from `total_quantity`.
+
+For an existing installation, deploy the code and apply additive schema migrations with `php artisan migrate`. The staff-profile migration adds nullable profile fields and backfills existing converted staff accounts without changing ReaderProfiles or reader codes. Its rollback refuses to drop the new columns while profile data exists. Do not use `migrate:fresh` on an installation with library data.
 
 ## Verification
 

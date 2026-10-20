@@ -44,6 +44,12 @@ class User extends Authenticatable
         'password',
         'role',
         'is_locked',
+        'auth_version',
+        'remember_token',
+        'phone',
+        'address',
+        'date_of_birth',
+        'avatar_path',
     ];
 
     /**
@@ -67,6 +73,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_locked' => 'boolean',
+            'date_of_birth' => 'date',
         ];
     }
 }

@@ -3,6 +3,7 @@
 @section('content')
 <div class="app-shell">
     @include('library.partials.sidebar')
+    <button class="sidebar-backdrop" id="sidebar-backdrop" type="button" aria-label="Đóng menu" tabindex="-1"></button>
 
     <main class="main-area">
         @include('library.partials.topbar')
