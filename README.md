@@ -1,5 +1,9 @@
 # Library setup guide
 
+## Frontend and backend handoff
+
+The responsive account sidebar and optional account, membership, payment and support screens are documented in [Frontend API contracts](docs/frontend-feature-contracts.md). Backend APIs for membership plans, payment checkout and chat are not implemented in this branch, so those capabilities remain disabled. [Backend handoff](docs/BACKEND-HANDOFF.md) describes the pending reservation payment workflow and backend requirements.
+
 ## Environment
 
 - Laragon on Windows
