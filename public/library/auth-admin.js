@@ -232,14 +232,16 @@ function authSyncChrome(){
   document.getElementById('reader-nav').hidden=isStaff;
   document.getElementById('librarian-nav').hidden=!isLibrarian;
   document.getElementById('admin-nav').hidden=!isAdmin;
-  document.getElementById('nav-caption').textContent=isAdmin?'QUẢN TRỊ HỆ THỐNG':isLibrarian?'NGHIỆP VỤ THƯ VIỆN':'KHÔNG GIAN ĐỌC';
+  const navCaption=document.getElementById('nav-caption');
+  navCaption.hidden=isLibrarian;
+  navCaption.textContent=isAdmin?'QUẢN TRỊ HỆ THỐNG':'KHÔNG GIAN ĐỌC';
   document.querySelectorAll('#reader-nav [data-page]').forEach(link=>{link.hidden=!authSession&&authPrivatePages.has(link.dataset.page);});
   document.querySelector('.global-search-wrap').hidden=isStaff;
   document.getElementById('sidebar-help').hidden=isStaff;
   const sidebarRole=document.querySelector('.profile-copy small');if(sidebarRole)sidebarRole.textContent=!authSession?'Chưa đăng nhập':role==='Admin'?'Quản trị thư viện':role==='Thủ thư'?'Nhân viên thư viện':'Thành viên thân thiết';
   const sidebarName=document.querySelector('.profile-copy strong');if(sidebarName)sidebarName.textContent=authSession?.name||'Khách';
   const initials=(authSession?.name||'K').trim().split(/\s+/).slice(-2).map(part=>part[0]).join('').toLocaleUpperCase('vi');
-  document.querySelectorAll('.sidebar-profile .avatar,.top-avatar').forEach(avatar=>{if(state.avatar){avatar.innerHTML=`<img src="${authEscape(state.avatar)}" alt="Ảnh đại diện" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">`;}else{avatar.textContent=initials||'K';}});
+  document.querySelectorAll('.sidebar-profile .avatar,.top-avatar,.profile-big-avatar').forEach(avatar=>{if(state.avatar){avatar.innerHTML=`<img src="${authEscape(state.avatar)}" alt="Ảnh đại diện" style="width:100%;height:100%;object-fit:cover;border-radius:inherit">`;}else{avatar.textContent=initials||'K';}});
   const topAvatar=document.querySelector('.top-avatar');if(topAvatar)topAvatar.setAttribute('aria-label',`Hồ sơ ${role}: ${state.name}`);
 }
 
