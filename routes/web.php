@@ -34,6 +34,10 @@ Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('auth
 Route::get('/auth/session', fn () => response()->json([
     'user' => request()->user()?->only(['id', 'name', 'email', 'role']),
 ]))->middleware(['auth', 'active'])->name('auth.session');
+Route::middleware(['auth', 'active'])->group(function () {
+    Route::get('/my/profile', [AuthController::class, 'profile'])->name('profile.show');
+    Route::patch('/my/profile', [AuthController::class, 'updateProfile'])->name('profile.update');
+});
 Route::delete('/comments/{comment}', [BookCommentController::class, 'destroy'])
     ->middleware('auth')->name('comments.destroy');
 Route::get('/staff', fn () => response()->json(['message' => 'Khu vực nhân viên thư viện.']))
@@ -64,8 +68,6 @@ Route::middleware(['auth', 'active', 'role:Admin,Thủ thư'])
 
 Route::middleware(['auth', 'active', 'role:Độc giả'])
     ->group(function () {
-        Route::get('/my/profile', [AuthController::class, 'profile'])->name('profile.show');
-        Route::patch('/my/profile', [AuthController::class, 'updateProfile'])->name('profile.update');
         Route::get('/my/cart', [ReaderCartController::class, 'show'])->name('cart.show');
         Route::post('/my/cart/items', [ReaderCartController::class, 'addItem'])->name('cart.items.store');
         Route::patch('/my/cart/items/{item}', [ReaderCartController::class, 'updateItem'])->name('cart.items.update');

@@ -130,15 +130,10 @@ class AuthController extends Controller
     public function profile(Request $request): JsonResponse
     {
         $user = $request->user()->load('readerProfile');
-        $profile = $user->readerProfile?->toArray();
-        if ($profile) {
-            $profile['date_of_birth'] = $user->readerProfile->date_of_birth?->format('Y-m-d');
-            $profile['avatar_url'] = $user->readerProfile->avatar_path
-                ? Storage::disk('public')->url($user->readerProfile->avatar_path)
-                : null;
-        }
-
-        return response()->json(['user' => $this->userPayload($user), 'profile' => $profile]);
+        return response()->json([
+            'user' => $this->userPayload($user),
+            'profile' => $this->profilePayload($user),
+        ]);
     }
 
     public function updateProfile(Request $request): JsonResponse
@@ -153,35 +148,53 @@ class AuthController extends Controller
             'avatar' => ['nullable', 'image', 'max:2048'],
         ]);
         $profileData = array_intersect_key($validated, array_flip(['phone', 'address', 'date_of_birth']));
-        $oldAvatar = $user->readerProfile?->avatar_path;
+        $oldAvatar = $user->role === 'Độc giả'
+            ? $user->readerProfile?->avatar_path
+            : $user->avatar_path;
         if ($request->hasFile('avatar')) {
             $profileData['avatar_path'] = $request->file('avatar')->store('reader-avatars', 'public');
         }
         DB::transaction(function () use ($user, $validated, $profileData): void {
             $user->update(['name' => $validated['name'], 'email' => mb_strtolower($validated['email'])]);
-            $profile = $user->readerProfile()->firstOrNew();
-            if (! $profile->exists) {
-                $profile->reader_code = 'RD'.str_pad((string) $user->id, 6, '0', STR_PAD_LEFT);
+
+            if ($user->role === 'Độc giả') {
+                $profile = $user->readerProfile()->firstOrNew();
+                if (! $profile->exists) {
+                    $profile->reader_code = 'RD'.str_pad((string) $user->id, 6, '0', STR_PAD_LEFT);
+                }
+                $profile->fill($profileData)->save();
+            } else {
+                $user->update($profileData);
             }
-            $profile->fill($profileData)->save();
         });
-        if (isset($profileData['avatar_path']) && $oldAvatar) {
+        if (isset($profileData['avatar_path']) && $oldAvatar && $oldAvatar !== $profileData['avatar_path']) {
             Storage::disk('public')->delete($oldAvatar);
         }
         $user->refresh()->load('readerProfile');
-        $profile = $user->readerProfile?->toArray();
-        if ($profile) {
-            $profile['date_of_birth'] = $user->readerProfile->date_of_birth?->format('Y-m-d');
-            $profile['avatar_url'] = $user->readerProfile->avatar_path
-                ? Storage::disk('public')->url($user->readerProfile->avatar_path)
-                : null;
-        }
 
         return response()->json([
             'message' => 'Đã cập nhật hồ sơ.',
             'user' => $this->userPayload($user),
-            'profile' => $profile,
+            'profile' => $this->profilePayload($user),
         ]);
+    }
+
+    private function profilePayload(User $user): array
+    {
+        if ($user->role === 'Độc giả') {
+            $profile = $user->readerProfile?->toArray() ?? [];
+            $avatarPath = $user->readerProfile?->avatar_path;
+        } else {
+            $profile = $user->only(['phone', 'address', 'date_of_birth', 'avatar_path']);
+            $avatarPath = $user->avatar_path;
+        }
+
+        $profile['date_of_birth'] = $user->role === 'Độc giả'
+            ? $user->readerProfile?->date_of_birth?->format('Y-m-d')
+            : $user->date_of_birth?->format('Y-m-d');
+        $profile['avatar_url'] = $avatarPath ? Storage::disk('public')->url($avatarPath) : null;
+
+        return $profile;
     }
 
     private function userPayload(User $user): array

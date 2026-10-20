@@ -66,7 +66,7 @@ Repeated seeding preserves existing accounts, passwords and catalog records. Dem
 
 ## Database and models
 
-- User: existing login fields, name and role. Existing role values remain Admin, Thủ thư and Độc giả for compatibility. Reader accounts are soft-deleted so future loan history remains linked.
+- User: login fields, name, role and nullable phone, address, date_of_birth and avatar_path for staff profiles. Existing role values remain Admin, Thủ thư and Độc giả for compatibility. Reader accounts are soft-deleted so future loan history remains linked.
 - ReaderProfile: one per reader, unique user_id and reader_code, optional phone, address, date_of_birth and avatar_path. The full name remains in users.name to avoid duplicate data.
 - Author: name, optional biography; soft deletion.
 - Book: unique book_code, title, optional unique ISBN, description, publisher, publication_year, edition and cover_image_path; total_quantity and rental_fee in VND; soft deletion.
@@ -75,6 +75,7 @@ Repeated seeding preserves existing accounts, passwords and catalog records. Dem
 Relations: User::readerProfile(), ReaderProfile::user(), Book::authors(), Author::books().
 Reader codes are generated from the unique user ID as RD000001; gaps are expected.
 New reader accounts created through Eloquent automatically receive a profile. Registration and staff role conversion write the account and profile in one transaction. The migration also creates profiles for existing readers. A missing legacy reader profile is created with its required reader code when the reader updates their profile.
+The signed-in `/my/profile` endpoint supports all active roles. Reader contact data remains in `reader_profiles`; Admin and Librarian contact data is stored on `users`. Role changes carry the current profile values, and the staff-profile migration backfills existing converted accounts that still have a ReaderProfile.
 Book codes such as BK000001 identify a title/edition, not an individual physical copy. Supply a unique code when creating a book and retain it when editing its title. Handle duplicate-code validation in the CRUD endpoint; never generate codes by counting rows.
 A different edition gets a separate record. total_quantity counts all physical copies of the title. rental_fee is the per-copy fee for a 14-day loan; store it as a decimal, not a float.
 Validate nonnegative quantity/fee, field lengths, ISBN uniqueness and sensible publication years in CRUD requests. Do not expose profile identifiers for mass assignment.
@@ -110,7 +111,7 @@ Staff catalog and reader endpoints require authentication and the `Admin` or `Th
 For browser access to uploaded book covers and reader avatars, run `php artisan storage:link` once per local setup.
 The scheduled `reservations:expire` command marks ready holds past their 48-hour pickup window as expired. Run Laravel's scheduler in deployment (for local testing, `php artisan schedule:work`). Current inventory subtracts both outstanding copies on active loans and non-expired ready reservations from `total_quantity`.
 
-For an existing installation, deploy the code and apply the additive schema migration with `php artisan migrate`. This migration adds session-version and rental receipt columns; it preserves existing rows and leaves historical rental receipt fields empty. Do not use `migrate:fresh` on an installation with library data.
+For an existing installation, deploy the code and apply additive schema migrations with `php artisan migrate`. The staff-profile migration adds nullable profile fields and backfills existing converted staff accounts without changing ReaderProfiles or reader codes. Its rollback refuses to drop the new columns while profile data exists. Do not use `migrate:fresh` on an installation with library data.
 
 ## Verification
 

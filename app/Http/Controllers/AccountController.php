@@ -59,17 +59,42 @@ class AccountController extends Controller
         if (array_key_exists('password', $data) && $data['password'] === null) {
             unset($data['password']);
         }
-        DB::transaction(function () use ($account, $data): void {
+        $previousRole = $account->role;
+        $nextRole = $data['role'] ?? $previousRole;
+        DB::transaction(function () use ($account, $data, $previousRole, $nextRole): void {
             if (isset($data['password'])) {
                 $data['remember_token'] = Str::random(60);
                 $data['auth_version'] = $account->auth_version + 1;
             }
 
             $account->update($data);
-            if (($data['role'] ?? $account->role) === 'Độc giả' && ! $account->readerProfile()->exists()) {
-                $profile = $account->readerProfile()->make();
-                $profile->reader_code = 'RD'.str_pad((string) $account->id, 6, '0', STR_PAD_LEFT);
-                $profile->save();
+
+            if ($previousRole === 'Độc giả' && $nextRole !== 'Độc giả') {
+                $profile = $account->readerProfile;
+                if ($profile) {
+                    $staffProfile = [];
+                    foreach (['phone', 'address', 'date_of_birth', 'avatar_path'] as $field) {
+                        $staffProfile[$field] = $profile->{$field};
+                    }
+                    if ($staffProfile) {
+                        $account->update($staffProfile);
+                    }
+                }
+            }
+
+            if ($nextRole === 'Độc giả') {
+                $profile = $account->readerProfile()->firstOrNew();
+                if (! $profile->exists) {
+                    $profile->reader_code = 'RD'.str_pad((string) $account->id, 6, '0', STR_PAD_LEFT);
+                }
+                if ($previousRole !== 'Độc giả') {
+                    foreach (['phone', 'address', 'date_of_birth', 'avatar_path'] as $field) {
+                        $profile->{$field} = $account->{$field};
+                    }
+                }
+                if (! $profile->exists || $profile->isDirty()) {
+                    $profile->save();
+                }
             }
         });
 
