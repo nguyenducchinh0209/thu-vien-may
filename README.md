@@ -64,6 +64,8 @@ Use these accounts only in a local development database.
 
 Repeated seeding preserves existing accounts, passwords and catalog records. Demo book titles and authors are fictional.
 
+To add the larger fictional catalog and workflow examples to an existing database without creating or updating account rows, run `php artisan db:seed --class=SampleDataSeeder`. It requires at least one existing active reader and one active Admin or Librarian account, plus the loan receipt columns from `2026_10_20_010000_add_loan_rental_receipts_and_auth_versions`. Apply that migration before seeding when needed; the sample-data seeder does not run migrations. It fills missing sample fixtures on reruns while preserving existing workflow statuses and payments. It stops if one of its sample books or authors was soft-deleted rather than restoring it. The sample-data seeder does not apply the separate staff-profile migration or write account/profile rows. Do not run the default `php artisan db:seed` against a database where account rows must remain untouched; `DatabaseSeeder` creates demo accounts when they are missing.
+
 ## Database and models
 
 - User: login fields, name, role and nullable phone, address, date_of_birth and avatar_path for staff profiles. Existing role values remain Admin, Thủ thư and Độc giả for compatibility. Reader accounts are soft-deleted so future loan history remains linked.
