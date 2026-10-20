@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ReaderProfile extends Model
 {
-    protected $fillable = ['phone', 'address', 'date_of_birth', 'avatar_path'];
+    protected $fillable = ['phone', 'address', 'date_of_birth', 'avatar_path', 'gender'];
 
     protected function casts(): array
     {

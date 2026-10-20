@@ -12,6 +12,7 @@ class Loan extends Model
 
     protected $fillable = [
         'reader_id', 'issued_by', 'issued_at', 'due_at', 'returned_at', 'status',
+        'reservation_id', 'payment_id',
         'rental_fee_total', 'rental_fee_received', 'rental_fee_received_at',
         'rental_fee_received_by', 'rental_fee_payment_method', 'rental_fee_receipt_note',
     ];

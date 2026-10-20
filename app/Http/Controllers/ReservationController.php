@@ -29,7 +29,10 @@ class ReservationController extends Controller
     public function store(StoreReservationRequest $request): JsonResponse
     {
         $validated = $request->validated();
-        $reservation = DB::transaction(function () use ($request, $validated): Reservation {
+        $paymentMethod = $request->validate([
+            'payment_method' => ['nullable', 'string', 'in:cash,bank_transfer'],
+        ])['payment_method'] ?? null;
+        $reservation = DB::transaction(function () use ($request, $validated, $paymentMethod): Reservation {
             $book = Book::query()->whereKey($validated['book_id'])->lockForUpdate()->firstOrFail();
             if ($validated['quantity'] > $book->total_quantity) {
                 throw ValidationException::withMessages([
@@ -55,6 +58,9 @@ class ReservationController extends Controller
                 'book_id' => $validated['book_id'],
                 'quantity' => $validated['quantity'],
                 'status' => 'pending',
+                'payment_status' => $paymentMethod ? 'unpaid' : null,
+                'payment_method' => $paymentMethod,
+                'currency' => $paymentMethod ? 'VND' : null,
             ]);
         });
 
@@ -103,7 +109,17 @@ class ReservationController extends Controller
 
     public function markReady(Request $request, Reservation $reservation): JsonResponse
     {
-        DB::transaction(function () use ($request, $reservation): void {
+        return $this->approveReservation($request, $reservation, false);
+    }
+
+    public function approve(Request $request, Reservation $reservation): JsonResponse
+    {
+        return $this->approveReservation($request, $reservation, true);
+    }
+
+    private function approveReservation(Request $request, Reservation $reservation, bool $paymentWorkflow): JsonResponse
+    {
+        DB::transaction(function () use ($request, $reservation, $paymentWorkflow): void {
             Book::query()->whereKey($reservation->book_id)->lockForUpdate()->firstOrFail();
             $reservation = Reservation::query()->whereKey($reservation->id)->lockForUpdate()->firstOrFail();
 
@@ -145,12 +161,21 @@ class ReservationController extends Controller
             }
 
             $readyAt = now();
-            $reservation->update([
+            $unitCents = $this->moneyCents((string) $book->rental_fee);
+            $values = [
                 'status' => 'ready',
                 'approved_by' => $request->user()->id,
                 'ready_at' => $readyAt,
                 'expires_at' => $readyAt->copy()->addHours(48),
-            ]);
+            ];
+            if ($paymentWorkflow || $reservation->payment_status !== null) {
+                $values += [
+                    'payment_status' => 'unpaid',
+                    'amount' => $this->formatCents($unitCents * (int) $reservation->quantity),
+                    'currency' => 'VND',
+                ];
+            }
+            $reservation->update($values);
         });
 
         return response()->json([
@@ -161,6 +186,7 @@ class ReservationController extends Controller
 
     public function fulfill(Request $request, Reservation $reservation, LoanIssuanceService $loans): JsonResponse
     {
+        abort_if($reservation->payment_status !== null, 409, 'Yêu cầu đã dùng quy trình thanh toán mới; hãy xác nhận giao dịch rồi dùng chức năng Giao sách.');
         $payment = $request->validate([
             'rental_fee_payment.amount' => ['required', 'numeric', 'min:0', 'max:9999999999.99', 'decimal:0,2'],
             'rental_fee_payment.method' => ['required', 'string', 'in:cash,bank_transfer,manual'],
@@ -172,5 +198,19 @@ class ReservationController extends Controller
             'message' => 'Đã tạo phiếu mượn từ yêu cầu đặt trước.',
             'loan' => $loan->load(['reader:id,name,email', 'items.book:id,title,book_code']),
         ], 201);
+    }
+
+    private function moneyCents(string $value): int
+    {
+        if (! preg_match('/^(\d+)(?:\.(\d{1,2}))?$/', $value, $matches)) {
+            throw new \InvalidArgumentException('Invalid book rental fee.');
+        }
+
+        return ((int) $matches[1] * 100) + (int) str_pad($matches[2] ?? '', 2, '0');
+    }
+
+    private function formatCents(int $cents): string
+    {
+        return intdiv($cents, 100).'.'.str_pad((string) ($cents % 100), 2, '0', STR_PAD_LEFT);
     }
 }

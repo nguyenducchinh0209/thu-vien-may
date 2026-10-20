@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\Book;
 use App\Models\Loan;
 use App\Models\LoanItem;
+use App\Models\Payment;
+use App\Models\PaymentQuote;
 use App\Models\Reservation;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
@@ -19,13 +21,19 @@ class LoanIssuanceService
         return $this->issue($staff, 0, [], $payment, $reservationId);
     }
 
+    public function issuePaidReservation(User $staff, int $reservationId, Payment $payment): Loan
+    {
+        return $this->issue($staff, 0, [], [], $reservationId, $payment);
+    }
+
     /**
      * @param  array<int, array{book_id: int, quantity: int}>  $items
      */
-    public function issue(User $staff, int $readerId, array $items, array $payment, ?int $reservationId = null): Loan
+    public function issue(User $staff, int $readerId, array $items, array $payment, ?int $reservationId = null, ?Payment $paidPayment = null): Loan
     {
-        return DB::transaction(function () use ($staff, $readerId, $items, $payment, $reservationId): Loan {
+        return DB::transaction(function () use ($staff, $readerId, $items, $payment, $reservationId, $paidPayment): Loan {
             $reservation = null;
+            $snapshotItems = [];
             if ($reservationId !== null) {
                 $reservationBookId = Reservation::query()->whereKey($reservationId)->value('book_id');
                 if ($reservationBookId === null) {
@@ -33,8 +41,35 @@ class LoanIssuanceService
                 }
                 Book::query()->whereKey($reservationBookId)->lockForUpdate()->first();
                 $reservation = Reservation::query()->whereKey($reservationId)->lockForUpdate()->firstOrFail();
+                if (! $paidPayment && $reservation->payment_status !== null) {
+                    throw ValidationException::withMessages([
+                        'reservation_id' => 'Yêu cầu này đang dùng quy trình thanh toán; hãy xác nhận khoản thu trước khi giao sách.',
+                    ]);
+                }
+                if ($paidPayment) {
+                    $paidPayment = Payment::query()->whereKey($paidPayment->id)->lockForUpdate()->firstOrFail();
+                    $existingLoan = Loan::query()->where('payment_id', $paidPayment->id)->lockForUpdate()->first();
+                    if ($existingLoan) {
+                        return $existingLoan->load(['reader:id,name,email', 'items.book:id,title,book_code']);
+                    }
+                    if ($paidPayment->reservation_id !== $reservation->id || $paidPayment->status !== 'paid'
+                        || $reservation->payment_status !== 'paid') {
+                        throw ValidationException::withMessages(['payment' => 'Khoản thanh toán chưa được xác nhận cho yêu cầu này.']);
+                    }
+                    $quote = PaymentQuote::query()->whereKey($paidPayment->quote_id)->firstOrFail();
+                    $snapshotItems = $quote->items_snapshot;
+                    if (count($snapshotItems) !== 1
+                        || (int) ($snapshotItems[0]['book_id'] ?? 0) !== (int) $reservation->book_id
+                        || (int) ($snapshotItems[0]['quantity'] ?? 0) !== (int) $reservation->quantity) {
+                        throw ValidationException::withMessages(['payment' => 'Bản chụp báo giá không còn khớp với yêu cầu đặt sách.']);
+                    }
+                }
                 if ($reservation->status !== 'ready' || ! $reservation->expires_at?->isFuture()) {
-                    throw ValidationException::withMessages(['reservation_id' => 'Yêu cầu đặt trước không còn hiệu lực.']);
+                    throw ValidationException::withMessages([
+                        'reservation_id' => $paidPayment
+                            ? 'Khoản đã thu được giữ nguyên nhưng thời hạn giao sách đã hết; cần xử lý thủ công.'
+                            : 'Yêu cầu đặt trước không còn hiệu lực.',
+                    ]);
                 }
                 $readerId = $reservation->reader_id;
                 $items = [['book_id' => $reservation->book_id, 'quantity' => $reservation->quantity]];
@@ -83,16 +118,31 @@ class LoanIssuanceService
                 }
             }
 
-            $totalCents = 0;
-            foreach ($items as $item) {
-                $book = $books->get((int) $item['book_id']);
-                $totalCents += (int) round((float) $book->rental_fee * 100) * (int) $item['quantity'];
-            }
-            $receivedCents = (int) round((float) $payment['amount'] * 100);
-            if ($receivedCents !== $totalCents) {
-                throw ValidationException::withMessages([
-                    'rental_fee_payment.amount' => 'Số tiền đã thu phải bằng tổng phí mượn do máy chủ tính.',
-                ]);
+            if ($paidPayment) {
+                $totalCents = $this->moneyCents((string) $paidPayment->amount);
+                $receivedCents = $totalCents;
+                $receiptMethod = $paidPayment->method;
+                $receiptNote = $paidPayment->transfer_snapshot['simulated'] ?? false
+                    ? 'Chuyển khoản mô phỏng; đã được thư viện xác nhận.'
+                    : null;
+                $receivedAt = $paidPayment->confirmed_at;
+                $receivedBy = $paidPayment->confirmed_by;
+            } else {
+                $totalCents = 0;
+                foreach ($items as $item) {
+                    $book = $books->get((int) $item['book_id']);
+                    $totalCents += (int) round((float) $book->rental_fee * 100) * (int) $item['quantity'];
+                }
+                $receivedCents = (int) round((float) $payment['amount'] * 100);
+                if ($receivedCents !== $totalCents) {
+                    throw ValidationException::withMessages([
+                        'rental_fee_payment.amount' => 'Số tiền đã thu phải bằng tổng phí mượn do máy chủ tính.',
+                    ]);
+                }
+                $receiptMethod = $payment['method'];
+                $receiptNote = $payment['receipt_note'] ?? null;
+                $receivedAt = now();
+                $receivedBy = $staff->id;
             }
 
             $issuedAt = now();
@@ -102,20 +152,23 @@ class LoanIssuanceService
                 'issued_at' => $issuedAt,
                 'due_at' => $issuedAt->copy()->addDays(14),
                 'status' => 'active',
+                'reservation_id' => $reservation?->id,
+                'payment_id' => $paidPayment?->id,
                 'rental_fee_total' => number_format($totalCents / 100, 2, '.', ''),
                 'rental_fee_received' => number_format($receivedCents / 100, 2, '.', ''),
-                'rental_fee_received_at' => $issuedAt,
-                'rental_fee_received_by' => $staff->id,
-                'rental_fee_payment_method' => $payment['method'],
-                'rental_fee_receipt_note' => $payment['receipt_note'] ?? null,
+                'rental_fee_received_at' => $receivedAt,
+                'rental_fee_received_by' => $receivedBy,
+                'rental_fee_payment_method' => $receiptMethod,
+                'rental_fee_receipt_note' => $receiptNote,
             ]);
 
             foreach ($items as $item) {
                 $book = $books->get((int) $item['book_id']);
+                $snapshotUnitAmount = $paidPayment ? $snapshotItems[0]['unit_amount'] : $book->rental_fee;
                 $loan->items()->create([
                     'book_id' => $book->id,
                     'quantity' => $item['quantity'],
-                    'rental_fee_per_copy' => $book->rental_fee,
+                    'rental_fee_per_copy' => $snapshotUnitAmount,
                 ]);
             }
 
@@ -127,7 +180,16 @@ class LoanIssuanceService
             }
 
             return $loan;
-        });
+        }, 3);
+    }
+
+    private function moneyCents(string $value): int
+    {
+        if (! preg_match('/^(\d+)(?:\.(\d{1,2}))?$/', $value, $matches)) {
+            throw new \InvalidArgumentException('Invalid stored monetary amount.');
+        }
+
+        return ((int) $matches[1] * 100) + (int) str_pad($matches[2] ?? '', 2, '0');
     }
 
     /**

@@ -73,7 +73,7 @@ class AccountController extends Controller
                 $profile = $account->readerProfile;
                 if ($profile) {
                     $staffProfile = [];
-                    foreach (['phone', 'address', 'date_of_birth', 'avatar_path'] as $field) {
+                    foreach (['phone', 'address', 'date_of_birth', 'avatar_path', 'gender'] as $field) {
                         $staffProfile[$field] = $profile->{$field};
                     }
                     if ($staffProfile) {
@@ -88,7 +88,7 @@ class AccountController extends Controller
                     $profile->reader_code = 'RD'.str_pad((string) $account->id, 6, '0', STR_PAD_LEFT);
                 }
                 if ($previousRole !== 'Độc giả') {
-                    foreach (['phone', 'address', 'date_of_birth', 'avatar_path'] as $field) {
+                    foreach (['phone', 'address', 'date_of_birth', 'avatar_path', 'gender'] as $field) {
                         $profile->{$field} = $account->{$field};
                     }
                 }

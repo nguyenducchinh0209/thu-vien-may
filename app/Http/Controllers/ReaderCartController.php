@@ -96,7 +96,10 @@ class ReaderCartController extends Controller
 
     public function checkout(Request $request): JsonResponse
     {
-        $reservations = DB::transaction(function () use ($request) {
+        $data = $request->validate([
+            'payment_method' => ['nullable', 'string', 'in:cash,bank_transfer'],
+        ]);
+        $reservations = DB::transaction(function () use ($request, $data) {
             $user = User::query()->lockForUpdate()->findOrFail($request->user()->id);
             $cart = BookCart::query()->where('user_id', $user->id)->lockForUpdate()->first();
             if (! $cart) {
@@ -148,6 +151,9 @@ class ReaderCartController extends Controller
                     'book_id' => $item->book_id,
                     'quantity' => $item->quantity,
                     'status' => 'pending',
+                    'payment_status' => ($data['payment_method'] ?? null) ? 'unpaid' : null,
+                    'payment_method' => $data['payment_method'] ?? null,
+                    'currency' => ($data['payment_method'] ?? null) ? 'VND' : null,
                 ]);
             }
 

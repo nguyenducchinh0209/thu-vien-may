@@ -30,7 +30,7 @@ function quote(purpose='reservation') {
 }
 test('all optional features fail closed without sending requests',async()=>{
   let calls=0;const {api}=harness({},async()=>{calls++;});
-  for(const action of [()=>api.membership(),()=>api.plans(),()=>api.quote('vip',1),()=>api.createPayment('q','cash','key'),()=>api.payment(1),()=>api.chat('hello',[]),()=>api.submitCartReservation('cash'),()=>api.reservationAction(7,'approve'),()=>api.reservations()])await assert.rejects(action(),{name:'FeatureUnavailable'});
+  for(const action of [()=>api.membership(),()=>api.plans(),()=>api.quote('vip',1),()=>api.createPayment('q','cash','key'),()=>api.payment(1),()=>api.reportTransfer(1),()=>api.chat('hello',[]),()=>api.submitCartReservation('cash'),()=>api.reservationAction(7,'approve'),()=>api.reservations()])await assert.rejects(action(),{name:'FeatureUnavailable'});
   assert.equal(calls,0);assert.equal(api.capabilities.gender,false);
 });
 test('enabled contracts send same-origin credentials, CSRF and idempotency key',async()=>{
@@ -39,6 +39,12 @@ test('enabled contracts send same-origin credentials, CSRF and idempotency key',
   assert.equal(calls[0].url,'http://localhost/test-payments');assert.equal(calls[0].options.credentials,'same-origin');
   assert.equal(calls[0].options.headers['X-CSRF-TOKEN'],'test-csrf');
   assert.deepEqual(JSON.parse(calls[0].options.body),{quote_id:'quote-1',method:'cash',idempotency_key:'stable-key'});
+});
+test('transfer report uses the payment-specific API route with same-origin CSRF',async()=>{
+  const calls=[];const {api}=harness({capabilities:{payments:true}},async(url,options)=>{calls.push({url,options});return response({payment:{id:'p-1',status:'confirming'}});});
+  await api.reportTransfer('p-1');
+  assert.equal(calls[0].url,'http://localhost/my/payments/p-1/transfer');assert.equal(calls[0].options.method,'POST');
+  assert.equal(calls[0].options.headers['X-CSRF-TOKEN'],'test-csrf');assert.deepEqual(JSON.parse(calls[0].options.body),{});
 });
 test('foreign endpoints, invalid JSON and server errors are surfaced',async()=>{
   const foreign=harness({capabilities:{chat:true},endpoints:{chat:'https://other.test/chat'}});
@@ -54,8 +60,16 @@ test('reservation eligibility rejects missing payment state, expiry and all non-
   for(const status of ['pending','cancelled','fulfilled','expired'])assert.equal(rules.reservationPayable({...ready,status}),false);
   for(const row of [{...ready,expires_at:past()},{...ready,expires_at:null},{...ready,payment_status:'paid'},{...ready,payment_status:undefined}])assert.equal(rules.reservationPayable(row),false);
 });
+test('reservation list links resume existing payment but never starts a second payment',()=>{
+  const h=harness({capabilities:{payments:true,reservationWorkflow:true}});
+  const row={id:7,status:'ready',expires_at:future(),payment_status:'unpaid'};
+  assert.match(h.feature.paymentAction(row),/Thanh toán/);
+  for(const status of ['pending','confirming','paid'])assert.match(h.feature.paymentAction({...row,payment_status:status}),/Xem thanh toán/);
+  for(const changed of [{...row,status:'fulfilled'},{...row,expires_at:past()},{...row,payment_status:null}])assert.equal(h.feature.paymentAction(changed),'');
+});
 test('missing or expired membership never becomes free or VIP implicitly',()=>{
-  const {rules}=harness();assert.equal(rules.membershipLabel(null),'Chưa có thông tin');assert.equal(rules.membershipLabel({tier:'free'}),'Miễn phí');
+  const {rules}=harness();assert.equal(rules.membershipLabel(null),'Chưa có thông tin');assert.equal(rules.membershipLabel({tier:'free',status:'active'}),'Miễn phí');
+  assert.equal(rules.membershipLabel({tier:'free',status:'expired'}),'Chưa có thông tin');
   assert.equal(rules.membershipLabel({tier:'vip',status:'active',expires_at:future()}),'VIP');
   assert.equal(rules.membershipLabel({tier:'vip',status:'active',expires_at:past()}),'Chưa có thông tin');
   assert.equal(rules.paymentStatus('success'),'unknown');
@@ -125,13 +139,50 @@ test('paid VIP refreshes membership; cash registration alone never activates VIP
   h.feature.init();h.context.state.page='checkout';h.feature.setRoute('checkout/vip/7');h.feature.enter();await tick();h.fire('[data-payment-create]');await tick();assert.equal(memberships,0);
   status='paid';h.fire('[data-payment-check]');await tick();assert.equal(memberships,1);assert.match(h.elements.get('account-menu').innerHTML,/Xem gói VIP/);
 });
-test('all payment outcomes render from the API and QR details are never invented',async()=>{
+test('payment outcomes render from the API and demo transfer details never imply real payment or QR',async()=>{
   for(const [status,label] of Object.entries({pending:'Chờ thanh toán',confirming:'Đang xác nhận',failed:'Thanh toán thất bại',cancelled:'Giao dịch đã hủy',expired:'Đã hết hạn',weird:'Chưa xác định được trạng thái'})){
-    const h=harness({capabilities:{payments:true,reservationWorkflow:true}},async(url)=>response(url.endsWith('payment-quotes')?{quote:quote()}:{payment:{id:'p-1',quote_id:'q-1',method:'bank_transfer',status,transfer:{qr_url:'javascript:alert(1)',bank_name:'API Bank',content:'<reference>'}}}));
+    const h=harness({capabilities:{payments:true,reservationWorkflow:true}},async(url)=>response(url.endsWith('payment-quotes')?{quote:quote()}:{payment:{id:'p-1',quote_id:'q-1',method:'bank_transfer',status,transfer:{simulated:true,qr_url:'javascript:alert(1)',bank_name:'API Bank',content:'<reference>'}}}));
     h.feature.init();h.context.state.page='checkout';h.feature.setRoute('checkout/reservation/7');h.feature.enter();await tick();h.fire('[data-payment-create]');await tick();
     assert.ok(h.feature.view().includes(label));assert.doesNotMatch(h.feature.view(),/Thanh toán thành công|src="javascript:/);
-    if(['pending','confirming'].includes(status)){assert.match(h.feature.view(),/API Bank/);assert.match(h.feature.view(),/&lt;reference&gt;/);}
+    if(['pending','confirming'].includes(status)){assert.match(h.feature.view(),/API Bank/);assert.match(h.feature.view(),/&lt;reference&gt;/);assert.match(h.feature.view(),/Mô phỏng – không chuyển tiền thật/);assert.doesNotMatch(h.feature.view(),/payment-qr|Chuyển khoản QR/);}
   }
+});
+test('reservation and VIP checkout resume existing payments and report demo transfers through the payment endpoint',async()=>{
+  for(const purpose of ['reservation','vip']){
+    const q=quote(purpose);if(q.reservation)q.reservation.payment_status='pending';
+    const existing={id:'p-1',quote_id:q.id,method:'bank_transfer',status:'pending',transfer:{simulated:true,bank_name:'Demo Bank',account_name:'Demo account',account_number:'DEMO-1',content:'DEMO-p-1'}};
+    const calls=[];let memberships=0;
+    const h=harness({capabilities:{payments:true,reservationWorkflow:true,membership:true}},async(url,options)=>{
+      calls.push({url,options});
+      if(url.endsWith('payment-quotes'))return response({quote:q,payment:existing});
+      if(url.endsWith('/transfer'))return response({payment:{...existing,status:'confirming'}});
+      if(url.endsWith('/membership')){memberships++;return response({membership:{tier:'vip',status:'active',expires_at:future()}});}
+      return response({payment:{...existing,status:'paid'}});
+    });
+    h.feature.init();h.context.state.page='checkout';h.feature.setRoute(`checkout/${purpose}/7`);h.feature.enter();await tick();
+    assert.match(h.feature.view(),/Chờ thanh toán/);assert.match(h.feature.view(),/Demo Bank/);assert.doesNotMatch(h.feature.view(),/data-payment-create/);
+    h.fire('[data-payment-report]');await tick();
+    assert.equal(calls.filter(call=>call.url.endsWith('/transfer')).length,1);assert.match(h.feature.view(),/Đang xác nhận/);
+    h.fire('[data-payment-check]');await tick();assert.match(h.feature.view(),/Thanh toán thành công/);
+    assert.equal(calls.filter(call=>call.url.endsWith('/transfer')).length,1);
+    assert.equal(memberships,purpose==='vip'?1:0);
+  }
+});
+test('leaving checkout reloads paid VIP quote while same-page retries retain their request key',async()=>{
+  let quoteCalls=0;
+  const h=harness({capabilities:{payments:true,membership:true}},async url=>{
+    if(url.endsWith('payment-quotes')){
+      quoteCalls++;
+      const q=quote('vip');
+      return response({quote:q,payment:quoteCalls===1?{id:'paid-1',quote_id:q.id,method:'cash',status:'paid'}:null});
+    }
+    return response({membership:{tier:'vip',status:'active',expires_at:future()}});
+  });
+  h.feature.init();h.context.state.page='checkout';h.feature.setRoute('checkout/vip/7');h.feature.enter();await tick();
+  assert.equal(quoteCalls,1);assert.doesNotMatch(h.feature.view(),/data-payment-create/);
+  h.feature.setRoute('profile');h.context.state.page='profile';
+  h.feature.setRoute('checkout/vip/7');h.context.state.page='checkout';h.feature.enter();await tick();
+  assert.equal(quoteCalls,2);assert.match(h.feature.view(),/data-payment-create/);
 });
 test('retrying payment after an uncertain network failure reuses the idempotency key',async()=>{
   const keys=[];const h=harness({capabilities:{payments:true,reservationWorkflow:true}},async(url,options)=>{

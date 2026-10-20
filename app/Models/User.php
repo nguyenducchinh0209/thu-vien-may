@@ -50,6 +50,7 @@ class User extends Authenticatable
         'address',
         'date_of_birth',
         'avatar_path',
+        'gender',
     ];
 
     /**

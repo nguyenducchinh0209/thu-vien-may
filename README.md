@@ -2,7 +2,7 @@
 
 ## Frontend and backend handoff
 
-The responsive account sidebar and optional account, membership, payment and support screens are documented in [Frontend API contracts](docs/frontend-feature-contracts.md). Backend APIs for membership plans, payment checkout and chat are not implemented in this branch, so those capabilities remain disabled. [Backend handoff](docs/BACKEND-HANDOFF.md) describes the pending reservation payment workflow and backend requirements.
+The responsive account sidebar and account, membership, payment and reading screens are documented in [Frontend API contracts](docs/frontend-feature-contracts.md). This branch includes the reservation payment, VIP membership, profile gender and EPUB reading APIs. Bank transfer is a clearly labelled simulation that requires staff confirmation; it does not move real money. AI chat remains disabled and is outside this integration. [Backend handoff](docs/BACKEND-HANDOFF.md) documents the current API and workflow rules.
 
 ## Environment
 
@@ -106,6 +106,7 @@ Staff catalog and reader endpoints require authentication and the `Admin` or `Th
 - Loans: `/staff/loans` — staff issue a 14-day loan to a reader with one or more distinct book quantities. Before issuance, staff confirm collection of the exact server-calculated rental total; each loan stores the fee snapshot, amount, collection time, staff member, method and receipt note. `POST /staff/loans/{id}/returns` records full or partial returns and keeps each return event in history.
 - Inventory: `GET /staff/inventory` — lists total, currently-on-loan and available copy counts. Availability subtracts copies that have not yet been returned on active loans.
 - Public catalog: `GET /catalog/books` and `GET /catalog/books/{id}` — public search/details with author and rating summary.
+- EPUB reading: staff upload EPUB files from a book's staff detail page. Free readers can read the first three chapters only when the EPUB has clear navigation entries mapping to distinct XHTML chapter files; files without clear chapter boundaries are available only to active VIP readers. VIP provides full EPUB access, while physical-book borrowing remains available to both free and VIP readers.
 - Reader loan history: `GET /my/loans` — a reader's loans, return history and current overdue indicator.
 - Reader cart: `/my/cart` and `/my/cart/items` support listing, adding, updating and removing items. `POST /my/cart/reservations` submits all cart items as queued reservations atomically and clears the cart only on success.
 - Reservations: readers use `POST /reservations`, `GET /my/reservations` and `DELETE /reservations/{id}`. Staff use `/staff/reservations`; approve with `POST /staff/reservations/{id}/ready`, then record the exact rental fee and issue the loan with `POST /staff/reservations/{id}/fulfill`. Requests are queued FIFO per title; an approved quantity is held for 48 hours.

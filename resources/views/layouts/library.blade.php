@@ -27,6 +27,16 @@
     <script>
         window.libraryUser = {{ Illuminate\Support\Js::from($libraryUser) }};
         window.libraryAuthUrls = {{ Illuminate\Support\Js::from($libraryAuthUrls) }};
+        window.libraryFeatureConfig = {
+            capabilities: {
+                membership: true,
+                plans: true,
+                payments: true,
+                reservationWorkflow: true,
+                gender: true,
+                chat: false,
+            },
+        };
     </script>
     @yield('content')
     @include('library.partials.dialogs')

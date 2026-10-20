@@ -1,33 +1,25 @@
 # Bàn giao backend: tài khoản và thanh toán đặt trước
 
-## 1. Trạng thái của nhánh và nguyên nhân lỗi đang gặp
+## 1. Current implementation status
 
-Nhánh này chứa mã nguồn hiện tại của ứng dụng, giao diện tài khoản, VIP, chat hỗ trợ, sidebar thu gọn và các điểm nối API. **API thanh toán/VIP/chat và các bảng mới bên dưới chưa được triển khai trong nhánh.** Nội dung từ mục 3 trở đi là yêu cầu để backend thực hiện, không phải mô tả API đã chạy.
+This integration branch includes the reservation payment workflow, manual cash and simulated-transfer confirmation, VIP membership, profile gender, and protected EPUB reading APIs. AI chat remains disabled and is not implemented. The later sections retain the original handoff notes; where they describe work as pending, use the current routes, controllers, migrations, and tests as the source of truth.
 
-Lỗi độc giả chỉ thấy “Đã giữ” sau khi thủ thư duyệt có ba nguyên nhân cụ thể:
+The original “Đã giữ” symptom came from the earlier implementation having no reservation payment state. This branch adds that state and the payment APIs described below. The layout keeps the feature flags off until the matching additive migrations have been applied to the target database; never enable them to conceal a missing schema. The current payload and UI behavior are documented in [frontend-feature-contracts.md](frontend-feature-contracts.md).
 
-1. `ReservationController::markReady()` hiện chỉ ghi `status=ready`, `ready_at`, `expires_at=ready_at+48 giờ`.
-2. Bảng `reservations` và `Reservation::$fillable` hiện chưa có `payment_status`, `payment_method`, số tiền hoặc liên kết giao dịch. GET `/my/reservations` vì vậy chưa trả các trường frontend cần.
-3. `public/library/feature-api.js` mặc định tắt `payments` và `reservationWorkflow`. `authReservationStatus()` dùng nhãn cũ “Đã giữ” khi workflow tắt; `accountFeatures.paymentAction()` chỉ hiện nút khi cả hai khả năng bật và bản ghi là `ready`, chưa hết hạn, `payment_status=unpaid`.
-
-Chỉ đổi nhãn hoặc bật hai cờ sẽ không sửa được luồng: các endpoint mới chưa tồn tại và chưa có nơi lưu khoản thu. Không gán `paid` ở JavaScript để làm nút biến mất.
-
-Tài liệu payload frontend hiện có: [frontend-feature-contracts.md](frontend-feature-contracts.md). Khi có khác biệt, tài liệu này chỉ rõ công việc còn thiếu và các điểm cần phối hợp frontend trước khi bật.
-
-## 2. Mã hiện có cần đọc trước khi sửa
+## 2. Implemented source map
 
 | Vị trí | Trách nhiệm hiện tại / việc cần thay đổi |
 | --- | --- |
-| `routes/web.php` | Session auth + CSRF; phân vai Độc giả / Thủ thư / Admin. Thêm route mới trong đúng middleware group. |
-| `app/Http/Controllers/ReaderCartController.php::checkout` | Tạo nhiều reservation nguyên tử từ giỏ. Bổ sung validate/lưu phương thức dự kiến nếu gửi lên. |
-| `app/Http/Controllers/ReservationController.php` | FIFO, giữ sách 48 giờ, hủy, duyệt, giao sách. Bổ sung trạng thái tiền và tách xác nhận thu khỏi giao sách. |
-| `app/Models/Reservation.php` | Thêm quan hệ payment, fillable và casts cho cột mới. Không mass assign số tiền/trạng thái từ request. |
-| `app/Services/LoanIssuanceService.php` | Hiện tính phí theo giá sách lúc giao và yêu cầu thu đúng số tiền ngay lúc tạo loan. Luồng đã trả trước phải dùng biên nhận/snapshot đã lưu, không thu lần hai. |
-| `app/Http/Controllers/AuthController.php` | Đọc/sửa hồ sơ; độc giả lưu ở `reader_profiles`, nhân viên lưu các trường hồ sơ ở `users`. Chưa hỗ trợ gender. |
-| `routes/console.php` | Expire reservation hết hạn; giữ thời hạn cũ khi chuyển trạng thái tiền, không cộng lại 48 giờ. |
-| `resources/views/layouts/library.blade.php` | Nơi inject `window.libraryFeatureConfig` trước các script defer sau khi API sẵn sàng. |
+| `routes/web.php` | Session-authenticated routes for profiles, reservations, payments, VIP, EPUB and staff operations. |
+| `app/Http/Controllers/ReaderCartController.php` | Creates cart reservations atomically and records an explicitly selected payment method when supplied. |
+| `app/Http/Controllers/ReservationController.php` | Preserves FIFO inventory holds and the 48-hour window; separates approval, payment confirmation and handover. |
+| `app/Http/Controllers/PaymentController.php` | Owns quotes, idempotent payments, simulated-transfer reports, staff confirmation, and VIP membership grants. |
+| `app/Services/LoanIssuanceService.php` | Keeps legacy null-payment reservations compatible and requires paid workflow payments for handover without charging twice. |
+| `app/Http/Controllers/AuthController.php` | Reads and updates reader and staff profiles, including the nullable supported gender values. |
+| `routes/reading.php`, `app/Http/Controllers/EpubReadingController.php` | Serves protected EPUB reading and staff uploads; free readers get three chapters and active VIP readers get the full book. |
+| `resources/views/layouts/library.blade.php` | Injects the feature flags before deferred scripts; keep them off until migrations are applied. |
 
-Nhánh cũng mang theo các sửa đổi nền đã có trong thư mục ứng dụng: hồ sơ nhân viên, phiên đăng nhập và biên nhận phí mượn. Hai migration hiện có `2026_10_20_010000_add_loan_rental_receipts_and_auth_versions` và `2026_10_20_100000_add_staff_profile_fields_to_users_table` **không tạo hệ thống thanh toán đặt trước**. Kiểm tra `php artisan migrate:status` trước khi bổ sung migration; không tạo lại cột đã có trong `loans`/`users`.
+The additive feature migrations are `2026_10_20_110000_add_gender_to_profile_tables`, `2026_10_20_120000_create_reservation_payment_workflow`, and `2026_10_20_130000_add_epub_path_to_books`. Check `php artisan migrate:status` before deployment and apply only pending migrations with `php artisan migrate`; do not use `migrate:fresh` or repeat the sample-data seeder as part of this integration.
 
 ## 3. Quy tắc nghiệp vụ cần giữ
 

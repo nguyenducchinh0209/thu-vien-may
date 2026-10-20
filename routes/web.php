@@ -12,6 +12,8 @@ use App\Http\Controllers\FinePaymentController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\LibraryPageController;
 use App\Http\Controllers\LoanController;
+use App\Http\Controllers\MembershipController;
+use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PublicCatalogController;
 use App\Http\Controllers\ReaderCartController;
 use App\Http\Controllers\ReaderController;
@@ -21,6 +23,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/', LibraryPageController::class)->name('library');
 Route::get('/catalog/books', [PublicCatalogController::class, 'index'])->name('catalog.books.index');
+Route::get('/membership/plans', [MembershipController::class, 'plans'])->name('membership.plans.index');
 Route::get('/catalog/books/{book}', [PublicCatalogController::class, 'show'])->name('catalog.books.show');
 Route::get('/catalog/books/{book}/preview/{page}', [BookPreviewController::class, 'show'])->whereNumber('page')->name('catalog.books.preview');
 Route::get('/books/{book}/reviews', [ReviewController::class, 'index'])->name('books.reviews.index');
@@ -57,8 +60,13 @@ Route::middleware(['auth', 'active', 'role:Admin,Thủ thư'])
         Route::apiResource('loans', LoanController::class)->only(['index', 'store', 'show']);
         Route::post('loans/{loan}/returns', [LoanController::class, 'returnItems'])->name('loans.returns.store');
         Route::get('reservations', [ReservationController::class, 'staffIndex'])->name('reservations.index');
+        Route::post('reservations/{reservation}/approve', [ReservationController::class, 'approve'])->name('reservations.approve');
         Route::post('reservations/{reservation}/ready', [ReservationController::class, 'markReady'])->name('reservations.ready');
         Route::post('reservations/{reservation}/fulfill', [ReservationController::class, 'fulfill'])->name('reservations.fulfill');
+        Route::post('reservations/{reservation}/confirm-payment', [PaymentController::class, 'confirmReservation'])->name('reservations.confirm-payment');
+        Route::post('reservations/{reservation}/handover', [PaymentController::class, 'handover'])->name('reservations.handover');
+        Route::get('payments', [PaymentController::class, 'staffIndex'])->name('payments.index');
+        Route::post('payments/{payment}/confirm', [PaymentController::class, 'confirm'])->name('payments.confirm');
         Route::get('fines', [FineController::class, 'index'])->name('fines.index');
         Route::post('fines/{fine}/payments', [FinePaymentController::class, 'store'])->name('fines.payments.store');
         Route::patch('fines/{fine}/waive', [FineController::class, 'waive'])->middleware('role:Admin')->name('fines.waive');
@@ -68,6 +76,11 @@ Route::middleware(['auth', 'active', 'role:Admin,Thủ thư'])
 
 Route::middleware(['auth', 'active', 'role:Độc giả'])
     ->group(function () {
+        Route::get('/my/membership', [MembershipController::class, 'show'])->name('membership.show');
+        Route::post('/my/payment-quotes', [PaymentController::class, 'quote'])->name('payment-quotes.store');
+        Route::post('/my/payments', [PaymentController::class, 'store'])->name('payments.store');
+        Route::get('/my/payments/{payment}', [PaymentController::class, 'show'])->name('payments.show');
+        Route::post('/my/payments/{payment}/transfer', [PaymentController::class, 'reportTransfer'])->name('payments.transfer');
         Route::get('/my/cart', [ReaderCartController::class, 'show'])->name('cart.show');
         Route::post('/my/cart/items', [ReaderCartController::class, 'addItem'])->name('cart.items.store');
         Route::patch('/my/cart/items/{item}', [ReaderCartController::class, 'updateItem'])->name('cart.items.update');
@@ -76,6 +89,7 @@ Route::middleware(['auth', 'active', 'role:Độc giả'])
         Route::post('/my/cart/reservations', [ReaderCartController::class, 'checkout'])->name('cart.reservations.store');
         Route::get('/my/loans', [LoanController::class, 'mine'])->name('loans.mine');
         Route::get('/my/reservations', [ReservationController::class, 'mine'])->name('reservations.mine');
+        Route::post('/my/reservations/{reservation}/transfer', [PaymentController::class, 'reportReservationTransfer'])->name('reservations.transfer');
         Route::post('/reservations', [ReservationController::class, 'store'])->name('reservations.store');
         Route::delete('/reservations/{reservation}', [ReservationController::class, 'cancel'])->name('reservations.cancel');
         Route::get('/my/fines', [FineController::class, 'mine'])->name('fines.mine');
@@ -86,3 +100,5 @@ Route::middleware(['auth', 'active', 'role:Độc giả'])
         Route::get('/my/book-suggestions', [BookSuggestionController::class, 'mine'])->name('book-suggestions.mine');
         Route::post('/book-suggestions', [BookSuggestionController::class, 'store'])->name('book-suggestions.store');
     });
+
+require __DIR__.'/reading.php';

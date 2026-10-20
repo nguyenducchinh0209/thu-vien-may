@@ -11,6 +11,10 @@ class Book extends Model
 {
     use SoftDeletes;
 
+    protected $hidden = ['epub_path'];
+
+    protected $appends = ['has_epub'];
+
     protected $fillable = [
         'book_code', 'title', 'category', 'isbn', 'description', 'publisher',
         'publication_year', 'edition', 'cover_image_path', 'total_quantity', 'rental_fee', 'preview_pages',
@@ -24,6 +28,11 @@ class Book extends Model
             'rental_fee' => 'decimal:2',
             'preview_pages' => 'array',
         ];
+    }
+
+    public function getHasEpubAttribute(): bool
+    {
+        return filled($this->epub_path);
     }
 
     public function authors(): BelongsToMany

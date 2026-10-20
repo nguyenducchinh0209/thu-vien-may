@@ -4,12 +4,14 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Reservation extends Model
 {
     protected $fillable = [
         'reader_id', 'book_id', 'approved_by', 'quantity', 'status',
         'ready_at', 'expires_at', 'fulfilled_at', 'cancelled_at',
+        'payment_status', 'payment_method', 'amount', 'currency',
     ];
 
     protected function casts(): array
@@ -19,6 +21,7 @@ class Reservation extends Model
             'expires_at' => 'datetime',
             'fulfilled_at' => 'datetime',
             'cancelled_at' => 'datetime',
+            'amount' => 'decimal:2',
         ];
     }
 
@@ -35,5 +38,10 @@ class Reservation extends Model
     public function approver(): BelongsTo
     {
         return $this->belongsTo(User::class, 'approved_by')->withTrashed();
+    }
+
+    public function payment(): HasOne
+    {
+        return $this->hasOne(Payment::class, 'reservation_id');
     }
 }

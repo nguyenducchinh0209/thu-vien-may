@@ -145,9 +145,10 @@ class AuthController extends Controller
             'phone' => ['nullable', 'string', 'max:20'],
             'address' => ['nullable', 'string', 'max:5000'],
             'date_of_birth' => ['nullable', 'date', 'before:today'],
+            'gender' => ['nullable', 'string', 'in:male,female,other,prefer_not_to_say'],
             'avatar' => ['nullable', 'image', 'max:2048'],
         ]);
-        $profileData = array_intersect_key($validated, array_flip(['phone', 'address', 'date_of_birth']));
+        $profileData = array_intersect_key($validated, array_flip(['phone', 'address', 'date_of_birth', 'gender']));
         $oldAvatar = $user->role === 'Độc giả'
             ? $user->readerProfile?->avatar_path
             : $user->avatar_path;
@@ -185,7 +186,7 @@ class AuthController extends Controller
             $profile = $user->readerProfile?->toArray() ?? [];
             $avatarPath = $user->readerProfile?->avatar_path;
         } else {
-            $profile = $user->only(['phone', 'address', 'date_of_birth', 'avatar_path']);
+            $profile = $user->only(['phone', 'address', 'date_of_birth', 'avatar_path', 'gender']);
             $avatarPath = $user->avatar_path;
         }
 

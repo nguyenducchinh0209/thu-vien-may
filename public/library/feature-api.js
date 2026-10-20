@@ -7,7 +7,7 @@
   }
   function createLibraryFeatureApi(config = {}, transport = (...args) => fetch(...args)) {
     const capabilities = Object.freeze({membership:false, plans:false, payments:false, reservationWorkflow:false, chat:false, gender:false, ...config.capabilities});
-    const endpoints = {membership:'/my/membership', plans:'/membership/plans', quote:'/my/payment-quotes', payments:'/my/payments', reservations:'/my/reservations', cartReservations:'/my/cart/reservations', staffReservations:'/staff/reservations', chat:'/support/chat', ...config.endpoints};
+    const endpoints = {membership:'/my/membership', plans:'/membership/plans', quote:'/my/payment-quotes', payments:'/my/payments', reservations:'/my/reservations', cartReservations:'/my/cart/reservations', staffReservations:'/staff/reservations', staffPayments:'/staff/payments', chat:'/support/chat', ...config.endpoints};
     async function request(capability, endpoint, {method='GET', body, signal} = {}) {
       if (!capabilities[capability]) throw new FeatureUnavailable();
       const url = new URL(endpoint, root.location.origin);
@@ -40,6 +40,9 @@
       quote: (purpose, referenceId, options={}) => request('payments', endpoints.quote, {...options, method:'POST', body:{purpose, reference_id:String(referenceId)}}),
       createPayment: (quoteId, method, key, options={}) => request('payments', endpoints.payments, {...options, method:'POST', body:{quote_id:quoteId, method, idempotency_key:key}}),
       payment: (id, options) => request('payments', `${endpoints.payments.replace(/\/$/, '')}/${encodeURIComponent(id)}`, options),
+      reportTransfer: (id, options={}) => request('payments', `${endpoints.payments.replace(/\/$/, '')}/${encodeURIComponent(id)}/transfer`, {...options, method:'POST', body:{}}),
+      staffPayments: options => request('reservationWorkflow', endpoints.staffPayments, options),
+      confirmPayment: (id, method, options={}) => request('reservationWorkflow', `${endpoints.staffPayments.replace(/\/$/, '')}/${encodeURIComponent(id)}/confirm`, {...options, method:'POST', body:{method}}),
       submitCartReservation: (method, options={}) => request('reservationWorkflow', endpoints.cartReservations, {...options, method:'POST', body:{payment_method:method}}),
       reservationAction: (id, action, body={}, options={}) => {
         if (!['approve','report-transfer','confirm-payment','handover'].includes(action)) throw new Error('Thao tác đặt trước không hợp lệ.');
@@ -61,7 +64,7 @@
     },
     membershipLabel(value) {
       if (value?.tier === 'vip' && value.status === 'active' && Date.parse(value.expires_at) > Date.now()) return 'VIP';
-      if (value?.tier === 'free') return 'Miễn phí';
+      if (value?.tier === 'free' && value.status === 'active') return 'Miễn phí';
       return 'Chưa có thông tin';
     },
     paymentStatus(value) {

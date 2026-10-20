@@ -1,12 +1,12 @@
 # Frontend tài khoản, thanh toán, VIP và hỗ trợ
 
-Backend đọc [BACKEND-HANDOFF.md](BACKEND-HANDOFF.md) để biết nguyên nhân lỗi chỉ hiện “Đã giữ”, thiết kế bảng/cột, đối soát dữ liệu cũ và các API cần triển khai. Các API tùy chọn mô tả ở đây chưa tồn tại trong backend hiện tại.
+Backend đọc [BACKEND-HANDOFF.md](BACKEND-HANDOFF.md) để biết hợp đồng API và các quy tắc dữ liệu hiện hành. Các endpoint hồ sơ, VIP, thanh toán, đặt trước và đọc EPUB đã được triển khai trong nhánh tích hợp này.
 
-Frontend được phục vụ trực tiếp từ `public/library`, không cần build Vite. Không có API thanh toán, VIP hoặc AI mới được triển khai trong thay đổi này. Tất cả khả năng tùy chọn mặc định tắt; không có dữ liệu mẫu hoặc giao dịch thành công giả trong giao diện chạy thật.
+Frontend được phục vụ trực tiếp từ `public/library`, không cần build Vite. API code cho giới tính, VIP, thanh toán và quy trình đặt trước đã được thêm, nhưng layout giữ các cờ này tắt cho tới khi các migration của nhánh được áp dụng. Chat luôn tắt trong phạm vi này. Chuyển khoản chỉ là mô phỏng, không có QR hoặc kết nối ngân hàng; nhân viên phải xác nhận thủ công trước khi khoản thu được ghi nhận.
 
-## Bật kết nối khi backend đã sẵn sàng
+## Cấu hình tính năng
 
-Đặt cấu hình sau **trước các script defer** trong layout hoặc từ cấu hình triển khai. Chỉ bật từng khả năng sau khi backend đáp ứng đúng hợp đồng tương ứng. Không đặt khóa AI/cổng thanh toán trong trình duyệt.
+Layout đặt cấu hình trước **các script defer**. Sau khi áp dụng migration và kiểm tra các endpoint trên database triển khai, bật các cờ đã hoàn tất; giữ chat tắt vì API chat chưa thuộc phạm vi tích hợp. Không đặt khóa AI/cổng thanh toán trong trình duyệt.
 
 ```js
 window.libraryFeatureConfig = {
@@ -37,11 +37,11 @@ Endpoint phải cùng origin; client gửi session cookie, Accept JSON và CSRF 
 
 ### Quy trình đặt trước và xác nhận thanh toán
 
-Bật `reservationWorkflow` cùng `payments` khi tất cả endpoint dưới đây đã hoạt động. `GET /my/reservations` và `GET /staff/reservations` trả cùng các trường: `status` (`pending`, `ready`, `fulfilled`, `cancelled`, `expired`), `payment_status` (`unpaid`, `confirming`, `paid`...), `payment_method` (`bank_transfer` hoặc `cash`), `amount` và `expires_at`. `ready` chỉ cho biết sách đang được giữ trong kho; trạng thái phía độc giả chỉ là **Đã giữ** khi API trả `payment_status: paid`. Thiếu trường thanh toán thì giao diện hiện “chưa rõ thanh toán”, không tự suy ra.
+Bản tích hợp bật `reservationWorkflow` cùng `payments`. `GET /my/reservations` và `GET /staff/reservations` trả cùng các trường: `status` (`pending`, `ready`, `fulfilled`, `cancelled`, `expired`), `payment_status` (`unpaid`, `pending`, `confirming`, `paid`...), `payment_method` (`bank_transfer` hoặc `cash`), `amount` và `expires_at`. `ready` chỉ cho biết sách đang được giữ trong kho; trạng thái phía độc giả chỉ là **Đã giữ** khi API trả `payment_status: paid`. Thiếu trường thanh toán thì giao diện hiện “chưa rõ thanh toán”, không tự suy ra.
 
 - Độc giả gửi giỏ sách bằng POST `/my/cart/reservations` với `{payment_method: 'bank_transfer'|'cash'}`. Phương thức này chỉ là lựa chọn dự kiến; yêu cầu tạo ra ở trạng thái chờ duyệt. Trả `{reservations: [...]}` để giao diện đồng bộ số yêu cầu vừa tạo.
 - Thủ thư duyệt bằng POST `/staff/reservations/{id}/approve`. API giữ sách, giữ nguyên phương thức độc giả chọn và bắt đầu **một hạn 48 giờ** cho thanh toán và nhận sách. Lúc này payment status là `unpaid` và độc giả thấy **Chờ thanh toán**.
-- Báo giá và tạo payment vẫn dùng hợp đồng bên dưới. Cash chỉ tạo khoản chờ thu. Với QR, sau khi chuyển tiền độc giả gọi POST `/my/reservations/{id}/transfer` với `{payment_id}`; API chuyển sang `confirming`. Nút “Tôi đã chuyển khoản” chỉ báo đã gửi tiền, chưa xác nhận đã thu.
+- Báo giá và tạo payment vẫn dùng hợp đồng bên dưới. Cash chỉ tạo khoản chờ thu. Với chuyển khoản mô phỏng, độc giả gọi POST `/my/payments/{id}/transfer`; API chuyển sang `confirming`. Nút chỉ gửi thông báo để nhân viên kiểm tra và xác nhận, không thực hiện hoặc chứng minh giao dịch ngân hàng thật.
 - Thủ thư xác nhận bằng POST `/staff/reservations/{id}/confirm-payment` với `{method}`. Chỉ phản hồi API `payment_status: paid` mới chuyển độc giả sang **Đã giữ** và thủ thư sang **Thanh toán thành công**.
 - Khi bàn giao sách tại quầy, thủ thư gọi POST `/staff/reservations/{id}/handover`. Thao tác này tạo phiếu mượn, không thu phí lần nữa; API trả trạng thái `fulfilled`. Ngày hạn mượn bắt đầu từ thời điểm bàn giao.
 
@@ -51,11 +51,11 @@ Các endpoint thao tác đều trả bản ghi đặt trước đã cập nhật
 
 - GET/PATCH `/my/profile` giữ nguyên `{user, profile}`. Khi `gender` bật, `profile.gender` nhận `null`, `male`, `female`, `other`, `prefer_not_to_say`. JSON PATCH gửi `null` cho chưa cập nhật; multipart gửi chuỗi rỗng, backend chuẩn hóa thành null. Các trường hiện có vẫn lưu qua API hiện tại khi gender tắt.
 - GET `/my/membership`: `{membership: {tier: 'free'|'vip', status: 'active'|'expired'|'pending', expires_at: ISO8601|null}}`. VIP chỉ được hiển thị khi active và chưa hết hạn. Phản hồi thiếu không được suy ra là miễn phí.
-- GET `/membership/plans`: `{plans: [{id: 'vip-month', name: 'Tên gói', price: 100000, duration_label: '1 tháng', benefits: ['Quyền lợi do thư viện quy định']}]}`. Giá ở đây chỉ là minh họa cấu trúc hợp đồng, không được nhúng thành dữ liệu chạy thật. ID dùng chữ/số, gạch ngang hoặc gạch dưới.
+- GET `/membership/plans`: `{plans: [{id: 'vip-month', name: 'VIP 1 tháng', price: 200000, duration_label: '1 tháng', benefits: ['Đọc trực tuyến toàn văn sách EPUB']}]}`. VIP có hiệu lực một tháng lịch sau khi nhân viên xác nhận đã thu tiền; gia hạn nối tiếp từ ngày hết hạn hiện tại khi gói còn hiệu lực.
 
 ### Thanh toán
 
-- GET `/my/reservations` cần giữ `status`, `expires_at`, `quantity`, và bổ sung `payment_status` (`unpaid`/`paid`/`pending`/...) để frontend quyết định hiện nút Thanh toán. Chỉ `ready`, chưa hết hạn và `unpaid` được mở thanh toán; thiếu trạng thái tiền thì không hiện nút.
+- GET `/my/reservations` giữ `status`, `expires_at`, `quantity`, `payment_status` (`unpaid`/`paid`/`pending`/...) để frontend mở thanh toán mới hoặc tiếp tục xem giao dịch hiện có. Chỉ `ready`, chưa hết hạn và `unpaid` được mở giao dịch mới; giao dịch pending/confirming/paid có thể được mở lại mà không tạo khoản thu thứ hai.
 - POST `/my/payment-quotes`, body `{purpose: 'reservation'|'vip', reference_id: '7'}`:
 
 ```json
@@ -87,17 +87,17 @@ Các endpoint thao tác đều trả bản ghi đặt trước đã cập nhật
     "method": "bank_transfer",
     "status": "pending",
     "transfer": {
-      "qr_url": "https://example.com/payment-qr.png",
-      "bank_name": "Tên ngân hàng",
-      "account_name": "Tên người nhận",
-      "account_number": "Số tài khoản",
-      "content": "Nội dung chuyển khoản của giao dịch"
+      "simulated": true,
+      "bank_name": "Mô phỏng – không chuyển tiền thật · Test Library Bank",
+      "account_name": "Thư viện Mây (tài khoản mô phỏng)",
+      "account_number": "DEMO-LIBRARY-0001",
+      "content": "DEMO-p-123"
     }
   }
 }
 ```
 
-Trạng thái: `pending`, `confirming`, `paid`, `failed`, `cancelled`, `expired`. Trạng thái khác được hiển thị là chưa xác định và cho kiểm tra lại, tuyệt đối không suy thành thành công. `transfer` chỉ cần cho QR; không nhúng thông tin tài khoản mẫu. Chọn cash trả pending, chỉ nhân viên/backend xác nhận sau thu tiền. Thanh toán không tự giao sách; kích hoạt VIP thuộc backend, frontend tải lại membership khi nhận paid.
+Trạng thái: `pending`, `confirming`, `paid`, `failed`, `cancelled`, `expired`. Trạng thái khác được hiển thị là chưa xác định và cho kiểm tra lại, tuyệt đối không suy thành thành công. Thông tin ngân hàng và mã giao dịch trên màn hình chỉ dùng để minh họa; không chuyển tiền thật. Cash và chuyển khoản mô phỏng đều chỉ hoàn tất khi nhân viên xác nhận. Thanh toán không tự giao sách; kích hoạt VIP thuộc backend, frontend tải lại membership khi nhận `paid`.
 
 ## Chat
 

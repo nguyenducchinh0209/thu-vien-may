@@ -20,6 +20,7 @@
         <a href="#librarian-home" class="nav-link" data-page="librarian-home"><span class="nav-icon" data-icon="chart"></span><span>Tổng quan</span></a>
         <div class="side-caption side-caption-spaced">NGHIỆP VỤ</div>
         <a href="#reservations" class="nav-link" data-page="reservations"><span class="nav-icon" data-icon="bookmark"></span><span>Yêu cầu đặt trước</span></a>
+        <a href="#payments" class="nav-link" data-page="payments" data-feature="payments" hidden><span class="nav-icon" data-icon="chart"></span><span>Thanh toán</span></a>
         <a href="#loans" class="nav-link" data-page="loans"><span class="nav-icon" data-icon="book"></span><span>Phiếu mượn</span></a>
         <a href="#returns" class="nav-link" data-page="returns"><span class="nav-icon" data-icon="clock"></span><span>Nhận trả sách</span></a>
         <a href="#readers" class="nav-link" data-page="readers"><span class="nav-icon" data-icon="user"></span><span>Độc giả</span></a>
@@ -38,6 +39,7 @@
         <a href="#accounts" class="nav-link" data-page="accounts"><span class="nav-icon" data-icon="user"></span><span>Tài khoản & vai trò</span></a>
         <div class="side-caption side-caption-spaced">MƯỢN TRẢ & BÁO CÁO</div>
         <a href="#reservations" class="nav-link" data-page="reservations"><span class="nav-icon" data-icon="bookmark"></span><span>Đặt trước</span></a>
+        <a href="#payments" class="nav-link" data-page="payments" data-feature="payments" hidden><span class="nav-icon" data-icon="chart"></span><span>Thanh toán</span></a>
         <a href="#loans" class="nav-link" data-page="loans"><span class="nav-icon" data-icon="book"></span><span>Phiếu mượn</span></a>
         <a href="#returns" class="nav-link" data-page="returns"><span class="nav-icon" data-icon="clock"></span><span>Trả sách</span></a>
         <a href="#readers" class="nav-link" data-page="readers"><span class="nav-icon" data-icon="user"></span><span>Độc giả</span></a>
