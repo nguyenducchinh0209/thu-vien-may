@@ -85,7 +85,7 @@ class BookController extends Controller
                     ->join('loans', 'loans.id', '=', 'loan_items.loan_id')
                     ->where('loan_items.book_id', $lockedBook->id)
                     ->where('loans.status', 'active')
-                    ->sum(DB::raw('loan_items.quantity - loan_items.returned_quantity'));
+                    ->sum(DB::raw('loan_items.quantity - loan_items.returned_quantity - loan_items.lost_quantity'));
                 $reserved = (int) DB::table('reservations')
                     ->where('book_id', $lockedBook->id)
                     ->where('status', 'ready')

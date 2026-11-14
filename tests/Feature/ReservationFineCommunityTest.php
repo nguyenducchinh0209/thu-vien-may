@@ -41,6 +41,7 @@ class ReservationFineCommunityTest extends TestCase
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 1]],
             'rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])->assertUnprocessable()
             ->assertJsonValidationErrors('items.0.quantity');
 
@@ -60,6 +61,7 @@ class ReservationFineCommunityTest extends TestCase
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 1]],
             'rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])->assertUnprocessable()
             ->assertJsonValidationErrors('items.0.quantity');
 
@@ -68,7 +70,7 @@ class ReservationFineCommunityTest extends TestCase
             ->assertJsonPath('data.0.id', $reservationId);
 
         $this->actingAs($staff)
-            ->postJson("/staff/reservations/{$reservationId}/fulfill", ['rental_fee_payment' => ['amount' => '10000.00', 'method' => 'cash']])
+            ->postJson("/staff/reservations/{$reservationId}/fulfill", ['rental_fee_payment' => ['amount' => '10000.00', 'method' => 'cash'], 'deposit_payment' => ['amount' => '200000.00', 'method' => 'cash']])
             ->assertCreated()
             ->assertJsonPath('loan.reader.id', $reader->id)
             ->assertJsonPath('loan.items.0.quantity', 2);
@@ -104,7 +106,7 @@ class ReservationFineCommunityTest extends TestCase
             ->assertJsonPath('data.0.id', $reservation->id);
 
         $this->assertDatabaseHas('reservations', ['id' => $reservation->id, 'status' => 'expired']);
-        $this->postJson("/staff/reservations/{$reservation->id}/fulfill", ['rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash']])
+        $this->postJson("/staff/reservations/{$reservation->id}/fulfill", ['rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash'], 'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash']])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('reservation_id');
         $this->getJson('/staff/inventory?q=Expiring')
@@ -190,6 +192,7 @@ class ReservationFineCommunityTest extends TestCase
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 2]],
             'rental_fee_payment' => ['amount' => '10000.00', 'method' => 'cash'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])->assertCreated();
         $loanId = $loanResponse->json('loan.id');
         $loanItemId = $loanResponse->json('loan.items.0.id');

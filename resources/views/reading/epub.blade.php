@@ -19,7 +19,7 @@
         <a href="{{ url('/') }}#book/{{ $book->id }}">Back to book</a>
         <h1>{{ $book->title }}</h1>
         @unless ($canReadFullBook)
-            <p>Free preview: chapters 1–{{ $chapterLimit }}. Borrow the physical copy to read the full book, or activate VIP.</p>
+            <p>Free preview: chapters 1–{{ $chapterLimit }}. Activate VIP to read the full EPUB. Physical book loans do not include online reading access.</p>
         @endunless
         @unless ($previewAvailable)
             <p>Free preview is unavailable for this EPUB because its table of contents does not map one chapter to each separate XHTML document.</p>

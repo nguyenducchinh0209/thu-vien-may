@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class LoanReturnItem extends Model
@@ -27,6 +28,11 @@ class LoanReturnItem extends Model
 
     public function fine(): HasOne
     {
-        return $this->hasOne(Fine::class);
+        return $this->hasOne(Fine::class)->where('type', 'overdue');
+    }
+
+    public function fines(): HasMany
+    {
+        return $this->hasMany(Fine::class);
     }
 }

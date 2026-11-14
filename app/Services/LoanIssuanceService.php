@@ -11,27 +11,49 @@ use App\Models\Reservation;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class LoanIssuanceService
 {
-    public function issueReservation(User $staff, int $reservationId, array $payment): Loan
+    public function issueReservation(User $staff, int $reservationId, array $payment, ?string $dueAt = null, ?array $depositPayment = null): Loan
     {
-        return $this->issue($staff, 0, [], $payment, $reservationId);
+        return $this->issue($staff, 0, [], $payment, $reservationId, dueAt: $dueAt, depositPayment: $depositPayment);
     }
 
-    public function issuePaidReservation(User $staff, int $reservationId, Payment $payment): Loan
+    public function issuePaidReservation(User $staff, int $reservationId, Payment $payment, ?string $dueAt = null, ?array $depositPayment = null): Loan
     {
-        return $this->issue($staff, 0, [], [], $reservationId, $payment);
+        return $this->issue($staff, 0, [], [], $reservationId, $payment, $dueAt, $depositPayment);
     }
 
     /**
      * @param  array<int, array{book_id: int, quantity: int}>  $items
      */
-    public function issue(User $staff, int $readerId, array $items, array $payment, ?int $reservationId = null, ?Payment $paidPayment = null): Loan
+    public function issue(User $staff, int $readerId, array $items, array $payment, ?int $reservationId = null, ?Payment $paidPayment = null, ?string $dueAt = null, ?array $depositPayment = null, ?string $issuanceKey = null): Loan
     {
-        return DB::transaction(function () use ($staff, $readerId, $items, $payment, $reservationId, $paidPayment): Loan {
+        return DB::transaction(function () use ($staff, $readerId, $items, $payment, $reservationId, $paidPayment, $dueAt, $depositPayment, $issuanceKey): Loan {
+            if (! $depositPayment || (float) ($depositPayment['amount'] ?? 0) <= 0) {
+                throw ValidationException::withMessages(['deposit_payment.amount' => 'Nhập số tiền cọc đã thu trước khi giao sách.']);
+            }
+            $issuanceFingerprint = null;
+            if ($issuanceKey !== null && $reservationId === null && $paidPayment === null) {
+                $fingerprintData = [
+                    'reader_id' => $readerId,
+                    'items' => collect($items)->map(fn ($item) => ['book_id' => (int) $item['book_id'], 'quantity' => (int) $item['quantity']])->sortBy('book_id')->values()->all(),
+                    'rental_fee_payment' => $payment,
+                    'deposit_payment' => $depositPayment,
+                    'due_at' => $dueAt,
+                ];
+                $issuanceFingerprint = hash('sha256', json_encode($fingerprintData, JSON_THROW_ON_ERROR));
+                $existingLoan = Loan::query()->where('issuance_key', $issuanceKey)->lockForUpdate()->first();
+                if ($existingLoan) {
+                    if (! hash_equals((string) $existingLoan->issuance_fingerprint, $issuanceFingerprint)) {
+                        abort(409, 'Khóa tạo phiếu đã được dùng cho yêu cầu khác.');
+                    }
+                    return $existingLoan->load(['reader:id,name,email', 'items.book:id,title,book_code', 'deposit']);
+                }
+            }
             $reservation = null;
             $snapshotItems = [];
             if ($reservationId !== null) {
@@ -97,7 +119,7 @@ class LoanIssuanceService
             }
 
             $onLoan = LoanItem::query()
-                ->selectRaw('book_id, SUM(quantity - returned_quantity) as outstanding_quantity')
+                ->selectRaw('book_id, SUM(quantity - returned_quantity - lost_quantity) as outstanding_quantity')
                 ->whereIn('book_id', $bookIds)
                 ->whereHas('loan', fn (Builder $query) => $query->where('status', 'active'))
                 ->groupBy('book_id')
@@ -146,11 +168,15 @@ class LoanIssuanceService
             }
 
             $issuedAt = now();
+            $dueDate = $dueAt ? Carbon::parse($dueAt)->setTimezone(config('app.timezone')) : $issuedAt->copy()->addDays(14);
+            if ($dueDate->lessThanOrEqualTo($issuedAt)) {
+                throw ValidationException::withMessages(['due_at' => 'Ngày hẹn trả phải sau thời điểm phát phiếu mượn.']);
+            }
             $loan = Loan::create([
                 'reader_id' => $readerId,
                 'issued_by' => $staff->id,
                 'issued_at' => $issuedAt,
-                'due_at' => $issuedAt->copy()->addDays(14),
+                'due_at' => $dueDate,
                 'status' => 'active',
                 'reservation_id' => $reservation?->id,
                 'payment_id' => $paidPayment?->id,
@@ -160,6 +186,8 @@ class LoanIssuanceService
                 'rental_fee_received_by' => $receivedBy,
                 'rental_fee_payment_method' => $receiptMethod,
                 'rental_fee_receipt_note' => $receiptNote,
+                'issuance_key' => $issuanceKey,
+                'issuance_fingerprint' => $issuanceFingerprint,
             ]);
 
             foreach ($items as $item) {
@@ -171,6 +199,19 @@ class LoanIssuanceService
                     'rental_fee_per_copy' => $snapshotUnitAmount,
                 ]);
             }
+
+            $depositAmount = $this->moneyCents((string) $depositPayment['amount']);
+            if ($depositAmount <= 0) {
+                throw ValidationException::withMessages(['deposit_payment.amount' => 'Tiền cọc phải lớn hơn 0.']);
+            }
+
+            $loan->deposit()->create([
+                'amount' => number_format($depositAmount / 100, 2, '.', ''),
+                'method' => $depositPayment['method'],
+                'receipt_note' => $depositPayment['receipt_note'] ?? null,
+                'received_by' => $staff->id,
+                'received_at' => $issuedAt,
+            ]);
 
             if ($reservation) {
                 $reservation->update([

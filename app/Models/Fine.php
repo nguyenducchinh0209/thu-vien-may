@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class Fine extends Model
 {
     protected $fillable = [
-        'loan_id', 'loan_return_item_id', 'reader_id', 'overdue_days',
+        'loan_id', 'loan_return_item_id', 'loan_item_id', 'reader_id', 'fine_code', 'type', 'reason', 'created_by', 'request_key', 'overdue_days',
         'quantity', 'daily_rate', 'amount', 'status', 'waived_by',
         'waiver_reason', 'waived_at',
         'paid_by', 'paid_at',
@@ -38,6 +38,16 @@ class Fine extends Model
         return $this->belongsTo(LoanReturnItem::class, 'loan_return_item_id');
     }
 
+    public function loanItem(): BelongsTo
+    {
+        return $this->belongsTo(LoanItem::class);
+    }
+
+    public function createdBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'created_by')->withTrashed();
+    }
+
     public function waivedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'waived_by')->withTrashed();
@@ -51,5 +61,10 @@ class Fine extends Model
     public function checkoutPayment(): HasOne
     {
         return $this->hasOne(Payment::class)->latestOfMany();
+    }
+
+    public function depositAllocations(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(LoanDepositFineAllocation::class);
     }
 }

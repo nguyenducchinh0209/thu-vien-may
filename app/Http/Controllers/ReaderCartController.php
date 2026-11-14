@@ -9,6 +9,7 @@ use App\Models\BookCart;
 use App\Models\BookCartItem;
 use App\Models\Reservation;
 use App\Models\User;
+use App\Services\LibraryNotifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -94,7 +95,7 @@ class ReaderCartController extends Controller
         return response()->json(['message' => 'Đã làm trống giỏ sách.']);
     }
 
-    public function checkout(Request $request): JsonResponse
+    public function checkout(Request $request, LibraryNotifier $notifier): JsonResponse
     {
         $data = $request->validate([
             'payment_method' => ['nullable', 'string', 'in:cash,bank_transfer'],
@@ -161,6 +162,14 @@ class ReaderCartController extends Controller
 
             return collect($created)->map(fn (Reservation $reservation) => $reservation->load('book:id,title,book_code'));
         });
+
+        $bookTitles = $reservations->pluck('book.title')->filter()->take(3)->implode('”, “');
+        $moreBooks = $reservations->count() > 3 ? ' và '.($reservations->count() - 3).' đầu sách khác' : '';
+        $notifier->staff(
+            'Có yêu cầu đặt sách mới',
+            "Độc giả {$request->user()->name} gửi {$reservations->count()} yêu cầu: “{$bookTitles}”{$moreBooks}.",
+            $request->user(),
+        );
 
         return response()->json([
             'message' => 'Đã gửi các sách trong giỏ thành yêu cầu đặt trước.',

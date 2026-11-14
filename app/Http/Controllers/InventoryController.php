@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Book;
+use App\Services\BookAvailability;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -11,16 +12,7 @@ class InventoryController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $onLoan = DB::table('loan_items')
-            ->join('loans', 'loans.id', '=', 'loan_items.loan_id')
-            ->selectRaw('COALESCE(SUM(loan_items.quantity - loan_items.returned_quantity), 0)')
-            ->whereColumn('loan_items.book_id', 'books.id')
-            ->where('loans.status', 'active');
-        $reserved = DB::table('reservations')
-            ->selectRaw('COALESCE(SUM(quantity), 0)')
-            ->whereColumn('reservations.book_id', 'books.id')
-            ->where('status', 'ready')
-            ->where('expires_at', '>', now());
+        $availability = app(BookAvailability::class);
         $waiting = DB::table('reservations')
             ->selectRaw('COALESCE(SUM(quantity), 0)')
             ->whereColumn('reservations.book_id', 'books.id')
@@ -28,8 +20,8 @@ class InventoryController extends Controller
 
         $books = Book::query()
             ->select('books.*')
-            ->selectSub($onLoan, 'on_loan_quantity')
-            ->selectSub($reserved, 'reserved_quantity')
+            ->selectSub($availability->onLoan(), 'on_loan_quantity')
+            ->selectSub($availability->reserved(), 'reserved_quantity')
             ->selectSub($waiting, 'waiting_quantity')
             ->with('authors:id,name')
             ->when($request->filled('q'), function ($query) use ($request): void {

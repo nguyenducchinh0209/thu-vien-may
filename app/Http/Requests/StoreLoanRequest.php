@@ -2,10 +2,9 @@
 
 namespace App\Http\Requests;
 
-use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
-class StoreLoanRequest extends FormRequest
+class StoreLoanRequest extends LoanDueDateRequest
 {
     public function authorize(): bool
     {
@@ -18,6 +17,7 @@ class StoreLoanRequest extends FormRequest
     public function rules(): array
     {
         return [
+            ...parent::rules(),
             'reservation_id' => ['sometimes', 'required', 'integer', 'exists:reservations,id', 'prohibits:reader_id,items'],
             'reader_id' => [
                 'required_without:reservation_id',
@@ -35,6 +35,10 @@ class StoreLoanRequest extends FormRequest
             'rental_fee_payment.amount' => ['required', 'numeric', 'min:0', 'max:9999999999.99', 'decimal:0,2'],
             'rental_fee_payment.method' => ['required', 'string', Rule::in(['cash', 'bank_transfer', 'manual'])],
             'rental_fee_payment.receipt_note' => ['nullable', 'string', 'max:500'],
+            'deposit_payment.amount' => ['required', 'numeric', 'min:0.01', 'max:9999999999.99', 'decimal:0,2'],
+            'deposit_payment.method' => ['required', 'string', Rule::in(['cash', 'bank_transfer', 'manual'])],
+            'deposit_payment.receipt_note' => ['nullable', 'string', 'max:500'],
+            'issuance_key' => ['nullable', 'string', 'max:100'],
         ];
     }
 }

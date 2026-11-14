@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\LoanDueDateRequest;
+
 use App\Models\Membership;
 use App\Models\Book;
 use App\Models\Fine;
@@ -12,6 +14,7 @@ use App\Models\PaymentEvent;
 use App\Models\PaymentQuote;
 use App\Models\Reservation;
 use App\Models\User;
+use App\Services\LibraryNotifier;
 use App\Services\LoanIssuanceService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -72,7 +75,7 @@ class PaymentController extends Controller
                     $onLoan = (int) LoanItem::query()
                         ->where('book_id', $book->id)
                         ->whereHas('loan', fn (Builder $query) => $query->where('status', 'active'))
-                        ->sum(DB::raw('quantity - returned_quantity'));
+                        ->sum(DB::raw('quantity - returned_quantity - lost_quantity'));
                     $otherReserved = (int) Reservation::query()
                         ->where('book_id', $book->id)
                         ->where('id', '!=', $reservation->id)
@@ -231,7 +234,7 @@ class PaymentController extends Controller
         ]);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, LibraryNotifier $notifier): JsonResponse
     {
         $data = $request->validate([
             'quote_id' => ['required', 'string', 'size:26'],
@@ -324,10 +327,8 @@ class PaymentController extends Controller
             $paymentId = (string) Str::ulid();
             $transfer = $data['method'] === 'bank_transfer' ? [
                 'simulated' => true,
-                'bank_name' => 'Mô phỏng – không chuyển tiền thật · Test Library Bank',
-                'account_name' => 'Thư viện Mây (tài khoản mô phỏng)',
-                'account_number' => 'DEMO-LIBRARY-0001',
-                'content' => 'DEMO-'.$paymentId,
+                'qr_url' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+                'content' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
             ] : null;
             $payment = Payment::create([
                 'id' => $paymentId,
@@ -362,6 +363,20 @@ class PaymentController extends Controller
             return [$payment, true];
         }, 3);
 
+        if ($created) {
+            $purpose = match ($payment->purpose) {
+                'reservation' => 'đặt sách',
+                'vip' => 'nâng cấp thành viên VIP',
+                'fine' => 'thanh toán khoản phạt',
+                default => 'thanh toán',
+            };
+            $notifier->staff(
+                'Có yêu cầu thanh toán mới',
+                "Độc giả {$request->user()->name} gửi yêu cầu {$purpose} {$payment->amount} {$payment->currency}.",
+                $request->user(),
+            );
+        }
+
         return response()->json([
             'message' => $created ? 'Đã tạo yêu cầu thanh toán; giao dịch chờ thư viện xác nhận.' : 'Đã khôi phục giao dịch hiện có.',
             'payment' => $this->paymentPayload($payment),
@@ -376,10 +391,11 @@ class PaymentController extends Controller
         return response()->json(['payment' => $this->paymentPayload($payment->fresh())]);
     }
 
-    public function reportTransfer(Request $request, Payment $payment): JsonResponse
+    public function reportTransfer(Request $request, Payment $payment, LibraryNotifier $notifier): JsonResponse
     {
         abort_unless($payment->reader_id === $request->user()->id, 404);
         abort_unless($payment->method === 'bank_transfer', 409, 'Giao dịch này không dùng chuyển khoản mô phỏng.');
+        $alreadyReported = $payment->status === 'confirming';
         $payment = DB::transaction(function () use ($request, $payment): Payment {
             $initial = Payment::query()->whereKey($payment->id)->firstOrFail();
             $fine = $initial->fine_id
@@ -419,6 +435,15 @@ class PaymentController extends Controller
             return $payment->fresh();
         }, 3);
 
+        if (! $alreadyReported) {
+            $purpose = $payment->purpose === 'reservation' ? 'đặt sách' : ($payment->purpose === 'fine' ? 'khoản phạt' : 'thành viên VIP');
+            $notifier->staff(
+                'Độc giả đã báo chuyển khoản',
+                "{$request->user()->name} vừa báo chuyển khoản {$payment->amount} {$payment->currency} cho {$purpose}.",
+                $request->user(),
+            );
+        }
+
         return response()->json([
             'message' => 'Đã gửi thông báo. Thư viện cần xác nhận giao dịch thủ công.',
             'payment' => $this->paymentPayload($payment),
@@ -426,13 +451,13 @@ class PaymentController extends Controller
         ]);
     }
 
-    public function reportReservationTransfer(Request $request, Reservation $reservation): JsonResponse
+    public function reportReservationTransfer(Request $request, Reservation $reservation, LibraryNotifier $notifier): JsonResponse
     {
         $data = $request->validate(['payment_id' => ['required', 'string', 'size:26']]);
         $payment = Payment::query()->whereKey($data['payment_id'])
             ->where('reservation_id', $reservation->id)->firstOrFail();
 
-        return $this->reportTransfer($request, $payment);
+        return $this->reportTransfer($request, $payment, $notifier);
     }
 
     public function staffIndex(Request $request): JsonResponse
@@ -459,9 +484,10 @@ class PaymentController extends Controller
         return response()->json($payments);
     }
 
-    public function confirm(Request $request, Payment $payment): JsonResponse
+    public function confirm(Request $request, Payment $payment, LibraryNotifier $notifier): JsonResponse
     {
         $data = $request->validate(['method' => ['required', 'string', 'in:cash,bank_transfer']]);
+        $alreadyPaid = $payment->status === 'paid';
         $payment = DB::transaction(function () use ($request, $payment, $data): Payment {
             $initial = Payment::query()->whereKey($payment->id)->firstOrFail();
             $fine = $initial->fine_id
@@ -534,6 +560,24 @@ class PaymentController extends Controller
             return $payment->fresh();
         }, 3);
 
+        if (! $alreadyPaid) {
+            $purpose = match ($payment->purpose) {
+                'reservation' => ['Yêu cầu đặt sách đã thanh toán', 'reservations'],
+                'vip' => ['Thanh toán thành viên VIP đã xác nhận', 'profile'],
+                'fine' => ['Khoản phạt đã được thanh toán', 'fines'],
+                default => ['Thanh toán đã xác nhận', 'profile'],
+            };
+            $reader = User::query()->withTrashed()->find($payment->reader_id);
+            if ($reader) {
+                $notifier->reader(
+                    $reader,
+                    $purpose[0],
+                    "Thư viện đã xác nhận thanh toán {$payment->amount} {$payment->currency}.",
+                    $purpose[1],
+                );
+            }
+        }
+
         return response()->json([
             'message' => 'Đã xác nhận thanh toán.',
             'payment' => $this->paymentPayload($payment),
@@ -543,17 +587,41 @@ class PaymentController extends Controller
         ]);
     }
 
-    public function confirmReservation(Request $request, Reservation $reservation): JsonResponse
+    public function confirmReservation(Request $request, Reservation $reservation, LibraryNotifier $notifier): JsonResponse
     {
         $payment = Payment::query()->where('reservation_id', $reservation->id)->firstOrFail();
 
-        return $this->confirm($request, $payment);
+        return $this->confirm($request, $payment, $notifier);
     }
 
-    public function handover(Request $request, Reservation $reservation, LoanIssuanceService $loans): JsonResponse
+    public function cancel(Request $request, Payment $payment, LibraryNotifier $notifier): JsonResponse
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'min:3', 'max:500']]);
+        abort_unless($payment->fine_id, 422, 'Chỉ giao dịch phạt được hủy từ thao tác này.');
+        $payment = DB::transaction(function () use ($request, $payment, $data): Payment {
+            $payment = Payment::query()->whereKey($payment->id)->lockForUpdate()->firstOrFail();
+            if (! in_array($payment->status, ['pending', 'confirming'], true)) {
+                throw ValidationException::withMessages(['payment' => 'Chỉ giao dịch đang chờ xác nhận mới có thể hủy.']);
+            }
+            $this->transition($payment, 'cancelled', 'staff_cancelled', $request->user()->id, $data['reason']);
+            return $payment->fresh();
+        });
+        $reader = User::query()->withTrashed()->find($payment->reader_id);
+        if ($reader) $notifier->reader($reader, 'Giao dịch phạt đã bị hủy', 'Giao dịch '.$payment->id.' đã bị hủy. Lý do: '.$data['reason'], 'fines');
+        return response()->json(['message' => 'Đã hủy giao dịch chờ xác nhận.', 'payment' => $this->paymentPayload($payment)]);
+    }
+
+    public function handover(LoanDueDateRequest $request, Reservation $reservation, LoanIssuanceService $loans, LibraryNotifier $notifier): JsonResponse
     {
         $payment = Payment::query()->where('reservation_id', $reservation->id)->firstOrFail();
-        $loan = $loans->issuePaidReservation($request->user(), $reservation->id, $payment);
+        $loan = $loans->issuePaidReservation($request->user(), $reservation->id, $payment, $request->validated('due_at'), $request->validated('deposit_payment'));
+        $reservation = $reservation->fresh()->load(['reader', 'book']);
+        $notifier->reader(
+            $reservation->reader,
+            'Sách đã được bàn giao',
+            "Thủ thư {$request->user()->name} đã ghi nhận bàn giao sách “{$reservation->book?->title}”.",
+            'shelf',
+        );
 
         return response()->json([
             'message' => 'Đã xác nhận giao sách.',

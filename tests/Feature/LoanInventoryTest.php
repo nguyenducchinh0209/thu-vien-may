@@ -46,6 +46,7 @@ class LoanInventoryTest extends TestCase
                     ['book_id' => $secondBook->id, 'quantity' => 1],
                 ],
                 'rental_fee_payment' => ['amount' => '12500.00', 'method' => 'cash'],
+                'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
             ])
             ->assertCreated()
             ->assertJsonPath('loan.status', 'active')
@@ -116,6 +117,7 @@ class LoanInventoryTest extends TestCase
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 2]],
             'rental_fee_payment' => ['amount' => '10000.00', 'method' => 'cash'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors('items.0.quantity');
@@ -124,6 +126,7 @@ class LoanInventoryTest extends TestCase
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 1]],
             'rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])->assertCreated();
 
         $loan = Loan::with('items')->firstOrFail();
@@ -152,6 +155,7 @@ class LoanInventoryTest extends TestCase
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 2]],
             'rental_fee_payment' => ['amount' => '2500.00', 'method' => 'cash', 'receipt_note' => 'Cash desk receipt'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])->assertUnprocessable()->assertJsonValidationErrors('rental_fee_payment.amount');
 
         $this->assertDatabaseCount('loans', 0);
@@ -159,6 +163,7 @@ class LoanInventoryTest extends TestCase
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 2]],
             'rental_fee_payment' => ['amount' => '2501.00', 'method' => 'cash', 'receipt_note' => 'Cash desk receipt'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])->assertCreated()->assertJsonPath('loan.rental_fee_total', '2501.00')
             ->assertJsonPath('loan.rental_fee_received', '2501.00')
             ->assertJsonPath('loan.rental_fee_payment_method', 'cash')

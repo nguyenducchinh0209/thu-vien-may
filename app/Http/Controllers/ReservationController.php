@@ -3,11 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreReservationRequest;
+use App\Http\Requests\LoanDueDateRequest;
 use App\Models\Book;
 use App\Models\Loan;
 use App\Models\LoanItem;
 use App\Models\Payment;
 use App\Models\Reservation;
+use App\Services\LibraryNotifier;
 use App\Services\LoanIssuanceService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -64,7 +66,7 @@ class ReservationController extends Controller
         ]);
     }
 
-    public function store(StoreReservationRequest $request): JsonResponse
+    public function store(StoreReservationRequest $request, LibraryNotifier $notifier): JsonResponse
     {
         $validated = $request->validated();
         $paymentMethod = $request->validate([
@@ -102,13 +104,20 @@ class ReservationController extends Controller
             ]);
         });
 
+        $bookTitle = $reservation->book()->value('title') ?? 'một đầu sách';
+        $notifier->staff(
+            'Có yêu cầu đặt sách mới',
+            "Độc giả {$request->user()->name} vừa gửi yêu cầu đặt “{$bookTitle}”.",
+            $request->user(),
+        );
+
         return response()->json([
             'message' => 'Đã gửi yêu cầu đặt trước.',
             'reservation' => $reservation->load('book:id,title,book_code'),
         ], 201);
     }
 
-    public function cancel(Request $request, Reservation $reservation): JsonResponse
+    public function cancel(Request $request, Reservation $reservation, LibraryNotifier $notifier): JsonResponse
     {
         DB::transaction(function () use ($request, $reservation): void {
             Book::withTrashed()->whereKey($reservation->book_id)->lockForUpdate()->first();
@@ -121,6 +130,13 @@ class ReservationController extends Controller
                 'cancelled_at' => now(),
             ]);
         });
+
+        $bookTitle = $reservation->book()->value('title') ?? 'một đầu sách';
+        $notifier->staff(
+            'Độc giả đã hủy yêu cầu đặt sách',
+            "Độc giả {$request->user()->name} đã hủy yêu cầu “{$bookTitle}”.",
+            $request->user(),
+        );
 
         return response()->json(['message' => 'Đã hủy yêu cầu đặt trước.']);
     }
@@ -145,17 +161,17 @@ class ReservationController extends Controller
         return response()->json($reservations);
     }
 
-    public function markReady(Request $request, Reservation $reservation): JsonResponse
+    public function markReady(Request $request, Reservation $reservation, LibraryNotifier $notifier): JsonResponse
     {
-        return $this->approveReservation($request, $reservation, false);
+        return $this->approveReservation($request, $reservation, false, $notifier);
     }
 
-    public function approve(Request $request, Reservation $reservation): JsonResponse
+    public function approve(Request $request, Reservation $reservation, LibraryNotifier $notifier): JsonResponse
     {
-        return $this->approveReservation($request, $reservation, true);
+        return $this->approveReservation($request, $reservation, true, $notifier);
     }
 
-    private function approveReservation(Request $request, Reservation $reservation, bool $paymentWorkflow): JsonResponse
+    private function approveReservation(Request $request, Reservation $reservation, bool $paymentWorkflow, LibraryNotifier $notifier): JsonResponse
     {
         DB::transaction(function () use ($request, $reservation, $paymentWorkflow): void {
             Book::query()->whereKey($reservation->book_id)->lockForUpdate()->firstOrFail();
@@ -184,7 +200,7 @@ class ReservationController extends Controller
             $onLoan = (int) LoanItem::query()
                 ->where('book_id', $book->id)
                 ->whereHas('loan', fn (Builder $query) => $query->where('status', 'active'))
-                ->sum(DB::raw('quantity - returned_quantity'));
+                ->sum(DB::raw('quantity - returned_quantity - lost_quantity'));
             $reserved = (int) Reservation::query()
                 ->where('book_id', $book->id)
                 ->where('status', 'ready')
@@ -216,13 +232,21 @@ class ReservationController extends Controller
             $reservation->update($values);
         });
 
+        $updatedReservation = $reservation->fresh()->load(['reader:id,name', 'book:id,title']);
+        $notifier->reader(
+            $updatedReservation->reader,
+            'Yêu cầu đặt sách đã được duyệt',
+            "Thủ thư {$request->user()->name} đã duyệt yêu cầu “{$updatedReservation->book?->title}”. Sách được giữ trong 48 giờ.",
+            'reservations',
+        );
+
         return response()->json([
             'message' => 'Đã duyệt; sách được giữ trong 48 giờ.',
-            'reservation' => $reservation->fresh()->load(['reader:id,name,email', 'book:id,title,book_code']),
+            'reservation' => $updatedReservation->load(['reader:id,name,email', 'book:id,title,book_code']),
         ]);
     }
 
-    public function fulfill(Request $request, Reservation $reservation, LoanIssuanceService $loans): JsonResponse
+    public function fulfill(LoanDueDateRequest $request, Reservation $reservation, LoanIssuanceService $loans, LibraryNotifier $notifier): JsonResponse
     {
         abort_if($reservation->payment_status !== null, 409, 'Yêu cầu đã dùng quy trình thanh toán mới; hãy xác nhận giao dịch rồi dùng chức năng Giao sách.');
         $payment = $request->validate([
@@ -230,11 +254,24 @@ class ReservationController extends Controller
             'rental_fee_payment.method' => ['required', 'string', 'in:cash,bank_transfer,manual'],
             'rental_fee_payment.receipt_note' => ['nullable', 'string', 'max:500'],
         ])['rental_fee_payment'];
-        $loan = $loans->issueReservation($request->user(), $reservation->id, $payment);
+        $deposit = $request->validate([
+            'deposit_payment.amount' => ['required', 'numeric', 'min:0.01', 'max:9999999999.99', 'decimal:0,2'],
+            'deposit_payment.method' => ['required', 'string', 'in:cash,bank_transfer,manual'],
+            'deposit_payment.receipt_note' => ['nullable', 'string', 'max:500'],
+        ])['deposit_payment'];
+        $loan = $loans->issueReservation($request->user(), $reservation->id, $payment, $request->validated('due_at'), $deposit);
+        $loan->load(['reader:id,name,email', 'items.book:id,title,book_code']);
+        $bookTitles = $loan->items->pluck('book.title')->filter()->implode('”, “');
+        $notifier->reader(
+            $loan->reader,
+            'Thủ thư đã giao sách',
+            "Thủ thư {$request->user()->name} đã phát phiếu mượn và giao sách “{$bookTitles}”. Hạn trả: {$loan->due_at->format('d/m/Y H:i')}.",
+            'shelf',
+        );
 
         return response()->json([
             'message' => 'Đã tạo phiếu mượn từ yêu cầu đặt trước.',
-            'loan' => $loan->load(['reader:id,name,email', 'items.book:id,title,book_code']),
+            'loan' => $loan,
         ], 201);
     }
 

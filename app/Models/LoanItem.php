@@ -8,13 +8,15 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class LoanItem extends Model
 {
-    protected $fillable = ['loan_id', 'book_id', 'quantity', 'returned_quantity', 'rental_fee_per_copy'];
+    protected $fillable = ['loan_id', 'book_id', 'quantity', 'returned_quantity', 'lost_quantity', 'written_off_quantity', 'rental_fee_per_copy'];
 
     protected function casts(): array
     {
         return [
             'quantity' => 'integer',
             'returned_quantity' => 'integer',
+            'lost_quantity' => 'integer',
+            'written_off_quantity' => 'integer',
             'rental_fee_per_copy' => 'decimal:2',
         ];
     }
@@ -32,5 +34,10 @@ class LoanItem extends Model
     public function returnItems(): HasMany
     {
         return $this->hasMany(LoanReturnItem::class);
+    }
+
+    public function fines(): HasMany
+    {
+        return $this->hasMany(Fine::class);
     }
 }

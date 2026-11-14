@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\ReviewBookSuggestionRequest;
 use App\Http\Requests\StoreBookSuggestionRequest;
 use App\Models\BookSuggestion;
+use App\Services\LibraryNotifier;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,9 +20,14 @@ class BookSuggestionController extends Controller
             ->paginate(10));
     }
 
-    public function store(StoreBookSuggestionRequest $request): JsonResponse
+    public function store(StoreBookSuggestionRequest $request, LibraryNotifier $notifier): JsonResponse
     {
         $suggestion = BookSuggestion::create($request->validated() + ['user_id' => $request->user()->id]);
+        $notifier->staff(
+            'Có đề xuất sách mới',
+            "Độc giả {$request->user()->name} đề xuất sách “{$suggestion->title}”.",
+            $request->user(),
+        );
 
         return response()->json([
             'message' => 'Đã gửi đề xuất bổ sung sách.',
@@ -42,7 +48,7 @@ class BookSuggestionController extends Controller
         return response()->json($suggestions);
     }
 
-    public function review(ReviewBookSuggestionRequest $request, BookSuggestion $suggestion): JsonResponse
+    public function review(ReviewBookSuggestionRequest $request, BookSuggestion $suggestion, LibraryNotifier $notifier): JsonResponse
     {
         $suggestion->update([
             ...$request->validated(),
@@ -50,9 +56,22 @@ class BookSuggestionController extends Controller
             'reviewed_at' => now(),
         ]);
 
+        $suggestion = $suggestion->fresh()->load('user:id,name');
+        $status = [
+            'approved' => 'đã được duyệt',
+            'rejected' => 'chưa được duyệt',
+            'ordered' => 'đã được thư viện đặt mua',
+        ][$suggestion->status] ?? 'đã được cập nhật';
+        $notifier->reader(
+            $suggestion->user,
+            'Đề xuất sách đã được cập nhật',
+            "Đề xuất “{$suggestion->title}” của bạn {$status}.",
+            'profile',
+        );
+
         return response()->json([
             'message' => 'Đã cập nhật trạng thái đề xuất.',
-            'suggestion' => $suggestion->fresh()->load('user:id,name,email', 'reviewer:id,name'),
+            'suggestion' => $suggestion->load('user:id,name,email', 'reviewer:id,name'),
         ]);
     }
 }

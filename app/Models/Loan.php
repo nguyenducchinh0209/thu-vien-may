@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Loan extends Model
 {
@@ -15,6 +16,7 @@ class Loan extends Model
         'reservation_id', 'payment_id',
         'rental_fee_total', 'rental_fee_received', 'rental_fee_received_at',
         'rental_fee_received_by', 'rental_fee_payment_method', 'rental_fee_receipt_note',
+        'issuance_key', 'issuance_fingerprint',
     ];
 
     protected function casts(): array
@@ -45,6 +47,16 @@ class Loan extends Model
     public function returns(): HasMany
     {
         return $this->hasMany(LoanReturn::class);
+    }
+
+    public function deposit(): HasOne
+    {
+        return $this->hasOne(LoanDeposit::class);
+    }
+
+    public function fines(): HasMany
+    {
+        return $this->hasMany(Fine::class);
     }
 
     public function getIsOverdueAttribute(): bool

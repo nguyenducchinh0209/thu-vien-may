@@ -9,6 +9,7 @@ use App\Models\Fine;
 use App\Models\Loan;
 use App\Models\LoanReturn;
 use App\Services\LoanIssuanceService;
+use App\Services\LibraryNotifier;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,6 +26,7 @@ class LoanController extends Controller
                 'reader.readerProfile:id,user_id,reader_code',
                 'issuer:id,name',
                 'items.book:id,title,book_code',
+                'deposit', 'deposit.settlement',
                 'returns.items.loanItem.book:id,title,book_code',
                 'returns.items.fine',
             ])
@@ -57,7 +59,7 @@ class LoanController extends Controller
     public function mine(Request $request): JsonResponse
     {
         $loans = Loan::query()
-            ->with(['issuer:id,name', 'items.book:id,title,book_code,cover_image_path,rental_fee', 'items.book.authors:id,name', 'returns.items.loanItem.book:id,title,book_code'])
+            ->with(['issuer:id,name', 'items.book:id,title,book_code,cover_image_path,rental_fee', 'items.book.authors:id,name', 'returns.items.loanItem.book:id,title,book_code', 'deposit', 'deposit.settlement'])
             ->where('reader_id', $request->user()->id)
             ->latest('issued_at')
             ->paginate(max(1, min($request->integer('per_page', 10), 50)));
@@ -65,24 +67,45 @@ class LoanController extends Controller
         return response()->json($loans);
     }
 
-    public function store(StoreLoanRequest $request, LoanIssuanceService $loans): JsonResponse
+    public function store(StoreLoanRequest $request, LoanIssuanceService $loans, LibraryNotifier $notifier): JsonResponse
     {
         $validated = $request->validated();
         $payment = $validated['rental_fee_payment'];
         $loan = isset($validated['reservation_id'])
-            ? $loans->issueReservation($request->user(), (int) $validated['reservation_id'], $payment)
-            : $loans->issue($request->user(), (int) $validated['reader_id'], $validated['items'], $payment);
+            ? $loans->issueReservation($request->user(), (int) $validated['reservation_id'], $payment, $validated['due_at'] ?? null, $validated['deposit_payment'])
+            : $loans->issue($request->user(), (int) $validated['reader_id'], $validated['items'], $payment, dueAt: $validated['due_at'] ?? null, depositPayment: $validated['deposit_payment'], issuanceKey: $validated['issuance_key'] ?? null);
+        $created = $loan->wasRecentlyCreated;
+        $loan->load([
+            'reader:id,name,email',
+            'reader.readerProfile:id,user_id,reader_code',
+            'issuer:id,name',
+            'items.book:id,title,book_code,cover_image_path,rental_fee',
+            'items.book.authors:id,name',
+            'deposit',
+        ]);
+        if ($created) {
+            $notifier->reader(
+                $loan->reader,
+                'Thủ thư đã tạo phiếu mượn',
+                "Thủ thư {$request->user()->name} đã phát phiếu mượn cho bạn. Hạn trả: {$loan->due_at->format('d/m/Y H:i')}.",
+                'shelf',
+            );
+        }
 
         return response()->json([
-            'message' => 'Tạo phiếu mượn thành công.',
-            'loan' => $loan->load([
-                'reader:id,name,email',
-                'reader.readerProfile:id,user_id,reader_code',
-                'issuer:id,name',
-                'items.book:id,title,book_code,cover_image_path,rental_fee',
-                'items.book.authors:id,name',
-            ]),
-        ], 201);
+            'message' => $created ? 'Tạo phiếu mượn thành công.' : 'Đã khôi phục phiếu mượn đã phát hành.',
+            'loan' => $loan,
+        ], $created ? 201 : 200);
+    }
+
+    public function showMine(Request $request, Loan $loan): JsonResponse
+    {
+        abort_unless($loan->reader_id === $request->user()->id, 404);
+        return response()->json(['loan' => $loan->load([
+            'issuer:id,name', 'items.book:id,title,book_code,cover_image_path',
+            'returns.items.loanItem.book:id,title,book_code', 'deposit.settlement',
+            'fines.payments.receivedBy:id,name', 'fines.waivedBy:id,name',
+        ])]);
     }
 
     public function show(Loan $loan): JsonResponse
@@ -94,13 +117,18 @@ class LoanController extends Controller
                 'issuer:id,name',
                 'items.book:id,title,book_code,cover_image_path,rental_fee',
                 'items.book.authors:id,name',
+                'deposit.settlement',
+                'fines.reader:id,name',
+                'fines.loanItem.book:id,title,book_code',
+                'fines.createdBy:id,name',
+                'fines.payments.receivedBy:id,name',
                 'returns.returnedBy:id,name',
                 'returns.items.loanItem.book:id,title,book_code',
             ]),
         ]);
     }
 
-    public function returnItems(StoreLoanReturnRequest $request, Loan $loan): JsonResponse
+    public function returnItems(StoreLoanReturnRequest $request, Loan $loan, LibraryNotifier $notifier): JsonResponse
     {
         $validated = $request->validated();
         $returnId = DB::transaction(function () use ($request, $loan, $validated): int {
@@ -129,7 +157,7 @@ class LoanController extends Controller
 
             foreach ($requestedItems as $index => $item) {
                 $loanItem = $loanItems->get((int) $item['loan_item_id']);
-                $remaining = $loanItem->quantity - $loanItem->returned_quantity;
+                $remaining = $loanItem->quantity - $loanItem->returned_quantity - $loanItem->lost_quantity;
 
                 if ($item['quantity'] > $remaining) {
                     throw ValidationException::withMessages([
@@ -157,21 +185,26 @@ class LoanController extends Controller
                 if ($secondsLate > 0) {
                     $overdueDays = max(1, (int) $lockedLoan->due_at->copy()->startOfDay()->diffInDays($returnedAt->copy()->startOfDay()));
                     $dailyRate = 3000;
-                    Fine::create([
+                    $fine = Fine::create([
                         'loan_id' => $lockedLoan->id,
                         'loan_return_item_id' => $returnItem->id,
+                        'loan_item_id' => $loanItem->id,
                         'reader_id' => $lockedLoan->reader_id,
+                        'type' => 'overdue',
+                        'reason' => "Trả trễ {$overdueDays} ngày",
+                        'created_by' => $request->user()->id,
                         'overdue_days' => $overdueDays,
                         'quantity' => $item['quantity'],
                         'daily_rate' => $dailyRate,
                         'amount' => $overdueDays * $dailyRate * $item['quantity'],
                         'status' => 'unpaid',
                     ]);
+                    $fine->update(['fine_code' => 'F'.str_pad((string) $fine->id, 9, '0', STR_PAD_LEFT)]);
                 }
             }
 
             $hasOutstandingItems = $lockedLoan->items()
-                ->whereColumn('returned_quantity', '<', 'quantity')
+                ->whereRaw('(returned_quantity + lost_quantity) < quantity')
                 ->exists();
 
             if (! $hasOutstandingItems) {
@@ -181,11 +214,24 @@ class LoanController extends Controller
             return $return->id;
         });
 
+        $returnRecord = LoanReturn::with(['items.loanItem.book', 'returnedBy:id,name'])->findOrFail($returnId);
+        $updatedLoan = $loan->fresh()->load(['reader', 'items.book:id,title,book_code']);
+        $fines = Fine::whereHas('returnItem', fn (Builder $query) => $query->where('loan_return_id', $returnId))->get();
+        $fineTotal = $fines->sum(fn (Fine $fine) => (float) $fine->amount);
+        $notifier->reader(
+            $updatedLoan->reader,
+            $fines->isEmpty() ? 'Thư viện đã nhận sách trả' : 'Đã nhận sách và ghi nhận khoản phạt',
+            $fines->isEmpty()
+                ? "Thủ thư {$request->user()->name} đã ghi nhận sách trả của bạn."
+                : "Thủ thư {$request->user()->name} đã nhận sách; khoản phạt trễ hạn là ".number_format($fineTotal, 0, ',', '.').' ₫.',
+            $fines->isEmpty() ? 'shelf' : 'fines',
+        );
+
         return response()->json([
             'message' => 'Ghi nhận trả sách thành công.',
-            'return' => LoanReturn::with(['items.loanItem.book', 'returnedBy:id,name'])->findOrFail($returnId),
-            'loan' => $loan->fresh()->load(['items.book:id,title,book_code']),
-            'fines' => Fine::whereHas('returnItem', fn (Builder $query) => $query->where('loan_return_id', $returnId))->get(),
+            'return' => $returnRecord,
+            'loan' => $updatedLoan->loadMissing('items.book:id,title,book_code'),
+            'fines' => $fines,
         ]);
     }
 }

@@ -10,10 +10,11 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use App\Services\LibraryNotifier;
 
 class FinePaymentController extends Controller
 {
-    public function store(Request $request, Fine $fine): JsonResponse
+    public function store(Request $request, Fine $fine, LibraryNotifier $notifier): JsonResponse
     {
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'min:0.01', 'max:9999999999.99', 'decimal:0,2'],
@@ -74,10 +75,12 @@ class FinePaymentController extends Controller
             return $payment->id;
         });
 
+        $fine = $fine->fresh()->load('reader:id,name');
+        $notifier->reader($fine->reader, 'Đã thu tiền phạt', 'Thư viện đã ghi nhận khoản thu phiếu '.$fine->fine_code.' là '.number_format((float) $fine->amount, 0, ',', '.').' ₫.', 'fines');
         return response()->json([
             'message' => 'Đã ghi nhận thu phạt.',
             'payment' => $fine->payments()->with('receivedBy:id,name')->findOrFail($paymentId),
-            'fine' => $fine->fresh(),
+            'fine' => $fine,
         ], 201);
     }
 }

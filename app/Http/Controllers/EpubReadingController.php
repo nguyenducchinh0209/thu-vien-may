@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Book;
 use App\Models\Membership;
+use App\Models\ReadingProgress;
 use DOMDocument;
 use DOMXPath;
 use Illuminate\Http\Request;
@@ -38,6 +39,12 @@ class EpubReadingController extends Controller
         $chapterNumber = $request->integer('chapter', 1);
 
         abort_unless($chapterNumber >= 1 && $chapterNumber <= $chapterLimit, 403);
+        if (! $isStaff) {
+            ReadingProgress::updateOrCreate(
+                ['user_id' => $request->user()->id, 'book_id' => $book->id],
+                ['last_chapter' => $chapterNumber, 'last_read_at' => now()],
+            );
+        }
 
         return view('reading.epub', [
             'book' => $book,

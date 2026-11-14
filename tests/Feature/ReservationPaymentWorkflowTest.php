@@ -35,6 +35,7 @@ class ReservationPaymentWorkflowTest extends TestCase
         $this->postJson('/staff/loans', [
             'reservation_id' => $reservationId,
             'rental_fee_payment' => ['amount' => '14000.00', 'method' => 'cash'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])->assertUnprocessable()->assertJsonValidationErrors('reservation_id');
 
         $quote = $this->actingAs($reader)->postJson('/my/payment-quotes', [
@@ -114,9 +115,9 @@ class ReservationPaymentWorkflowTest extends TestCase
         ])->assertCreated()
             ->assertJsonPath('payment.status', 'pending')
             ->assertJsonPath('payment.transfer.simulated', true)
-            ->assertJsonPath('payment.transfer.account_number', 'DEMO-LIBRARY-0001');
+            ->assertJsonPath('payment.transfer.qr_url', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
         $paymentId = $payment->json('payment.id');
-        $this->assertNull($payment->json('payment.transfer.qr_url'));
+        $this->assertSame('https://www.youtube.com/watch?v=dQw4w9WgXcQ', $payment->json('payment.transfer.qr_url'));
 
         $this->postJson("/my/payments/{$paymentId}/transfer")
             ->assertOk()
@@ -153,14 +154,18 @@ class ReservationPaymentWorkflowTest extends TestCase
         $this->postJson('/staff/loans', [
             'reservation_id' => $reservationId,
             'rental_fee_payment' => ['amount' => '10000.00', 'method' => 'cash'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])->assertUnprocessable()->assertJsonValidationErrors('reservation_id');
 
-        $loanId = $this->postJson("/staff/reservations/{$reservationId}/handover")
+        $dueAt = now()->addDays(30)->startOfMinute()->toISOString();
+        $loanId = $this->postJson("/staff/reservations/{$reservationId}/handover", ['due_at' => $dueAt, 'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash']])
             ->assertOk()
+            ->assertJsonPath('loan.due_at', $dueAt)
             ->assertJsonPath('loan.reservation_id', $reservationId)
             ->json('loan.id');
-        $this->postJson("/staff/reservations/{$reservationId}/handover")
+        $this->postJson("/staff/reservations/{$reservationId}/handover", ['due_at' => now()->addDays(7)->toISOString(), 'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash']])
             ->assertOk()
+            ->assertJsonPath('loan.due_at', $dueAt)
             ->assertJsonPath('loan.id', $loanId);
 
         $this->assertDatabaseHas('payments', [
@@ -341,6 +346,7 @@ class ReservationPaymentWorkflowTest extends TestCase
         ]);
         $this->actingAs($staff)->postJson("/staff/reservations/{$readyReservation->id}/fulfill", [
             'rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])->assertCreated();
 
         $pendingReservation = Reservation::create([
@@ -360,6 +366,7 @@ class ReservationPaymentWorkflowTest extends TestCase
         ]);
         $this->postJson("/staff/reservations/{$reservationId}/fulfill", [
             'rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash'],
+            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
         ])->assertCreated();
 
         $this->assertDatabaseHas('reservations', [

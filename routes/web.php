@@ -12,11 +12,14 @@ use App\Http\Controllers\FinePaymentController;
 use App\Http\Controllers\InventoryController;
 use App\Http\Controllers\LibraryPageController;
 use App\Http\Controllers\LoanController;
+use App\Http\Controllers\LoanDepositController;
 use App\Http\Controllers\MembershipController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PublicCatalogController;
 use App\Http\Controllers\ReaderCartController;
 use App\Http\Controllers\ReaderController;
+use App\Http\Controllers\ReadingBooksController;
 use App\Http\Controllers\ReservationController;
 use App\Http\Controllers\ReviewController;
 use Illuminate\Support\Facades\Route;
@@ -40,6 +43,9 @@ Route::get('/auth/session', fn () => response()->json([
 Route::middleware(['auth', 'active'])->group(function () {
     Route::get('/my/profile', [AuthController::class, 'profile'])->name('profile.show');
     Route::patch('/my/profile', [AuthController::class, 'updateProfile'])->name('profile.update');
+    Route::get('/my/notifications', [NotificationController::class, 'index'])->name('notifications.index');
+    Route::post('/my/notifications/read-all', [NotificationController::class, 'markAllRead'])->name('notifications.read-all');
+    Route::post('/my/notifications/{notification}/read', [NotificationController::class, 'markRead'])->name('notifications.read');
 });
 Route::delete('/comments/{comment}', [BookCommentController::class, 'destroy'])
     ->middleware('auth')->name('comments.destroy');
@@ -59,6 +65,8 @@ Route::middleware(['auth', 'active', 'role:Admin,Thủ thư'])
         Route::get('inventory', [InventoryController::class, 'index'])->name('inventory.index');
         Route::apiResource('loans', LoanController::class)->only(['index', 'store', 'show']);
         Route::post('loans/{loan}/returns', [LoanController::class, 'returnItems'])->name('loans.returns.store');
+        Route::get('loans/{loan}/deposit/settlement', [LoanDepositController::class, 'preview'])->name('loans.deposit.preview');
+        Route::post('loans/{loan}/deposit/settle', [LoanDepositController::class, 'settle'])->name('loans.deposit.settle');
         Route::get('reservations', [ReservationController::class, 'staffIndex'])->name('reservations.index');
         Route::post('reservations/{reservation}/approve', [ReservationController::class, 'approve'])->name('reservations.approve');
         Route::post('reservations/{reservation}/ready', [ReservationController::class, 'markReady'])->name('reservations.ready');
@@ -67,7 +75,10 @@ Route::middleware(['auth', 'active', 'role:Admin,Thủ thư'])
         Route::post('reservations/{reservation}/handover', [PaymentController::class, 'handover'])->name('reservations.handover');
         Route::get('payments', [PaymentController::class, 'staffIndex'])->name('payments.index');
         Route::post('payments/{payment}/confirm', [PaymentController::class, 'confirm'])->name('payments.confirm');
+        Route::post('payments/{payment}/cancel', [PaymentController::class, 'cancel'])->name('payments.cancel');
         Route::get('fines', [FineController::class, 'index'])->name('fines.index');
+        Route::post('fines', [FineController::class, 'store'])->name('fines.store');
+        Route::get('fines/{fine}', [FineController::class, 'show'])->name('fines.show');
         Route::post('fines/{fine}/payments', [FinePaymentController::class, 'store'])->name('fines.payments.store');
         Route::patch('fines/{fine}/waive', [FineController::class, 'waive'])->middleware('role:Admin')->name('fines.waive');
         Route::get('book-suggestions', [BookSuggestionController::class, 'staffIndex'])->name('book-suggestions.index');
@@ -88,6 +99,8 @@ Route::middleware(['auth', 'active', 'role:Độc giả'])
         Route::delete('/my/cart', [ReaderCartController::class, 'clear'])->name('cart.clear');
         Route::post('/my/cart/reservations', [ReaderCartController::class, 'checkout'])->name('cart.reservations.store');
         Route::get('/my/loans', [LoanController::class, 'mine'])->name('loans.mine');
+        Route::get('/my/loans/{loan}', [LoanController::class, 'showMine'])->name('loans.show');
+        Route::get('/my/reading-books', [ReadingBooksController::class, 'index'])->name('reading-books.index');
         Route::get('/my/reservations', [ReservationController::class, 'mine'])->name('reservations.mine');
         Route::get('/my/reservations/{reservation}', [ReservationController::class, 'show'])->name('reservations.show');
         Route::post('/my/reservations/{reservation}/transfer', [PaymentController::class, 'reportReservationTransfer'])->name('reservations.transfer');

@@ -88,7 +88,7 @@ function opRows(key){
 }
 function renderOpPage(key){
   const conf=opConfig[key], result=opRows(key);
-  const canAdd=conf.fields&&!['reservations','fines'].includes(key);
+  const canAdd=conf.fields&&!['reservations'].includes(key);
   return `<div class="eyebrow">VẬN HÀNH THƯ VIỆN</div><div class="heading-row"><div><h1 class="page-title">${conf.title}</h1><p class="subheading">${conf.desc}</p></div>${canAdd?`<button class="primary-button" data-op-add="${key}">+ Thêm mới</button>`:''}</div><div class="ops-toolbar"><label class="global-search ops-search"><span>${icon('search')}</span><input id="ops-search" value="${escapeHTML(opQuery)}" placeholder="Tìm trong danh sách…" autocomplete="off"></label><span class="results-label">${result.count} kết quả</span></div><section class="list-card" id="ops-list">${result.table}</section>${result.pagination}`;
 }
 const coreRender = render;

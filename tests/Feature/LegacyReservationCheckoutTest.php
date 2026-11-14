@@ -208,7 +208,7 @@ class LegacyReservationCheckoutTest extends TestCase
             ->assertOk()->assertJsonPath('payment.status', 'paid');
         $this->assertSame(0, Loan::query()->count());
 
-        $this->postJson('/staff/reservations/'.$reservation->id.'/handover')
+        $this->postJson('/staff/reservations/'.$reservation->id.'/handover', ['deposit_payment' => ['amount' => '200000.00', 'method' => 'cash']])
             ->assertOk()->assertJsonPath('reservation.status', 'fulfilled');
         $this->assertDatabaseHas('loans', [
             'reservation_id' => $reservation->id,
