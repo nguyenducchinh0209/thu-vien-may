@@ -27,6 +27,7 @@ class LoanController extends Controller
                 'issuer:id,name',
                 'items.book:id,title,book_code',
                 'deposit', 'deposit.settlement',
+                'fines:id,loan_id,amount,status',
                 'returns.items.loanItem.book:id,title,book_code',
                 'returns.items.fine',
             ])
@@ -53,17 +54,19 @@ class LoanController extends Controller
             ->paginate(max(1, min($request->integer('per_page', 10), 50)))
             ->withQueryString();
 
+        $loans->getCollection()->each(fn (Loan $loan) => $loan->setAttribute('money_summary', $this->moneySummary($loan)));
         return response()->json($loans);
     }
 
     public function mine(Request $request): JsonResponse
     {
         $loans = Loan::query()
-            ->with(['issuer:id,name', 'items.book:id,title,book_code,cover_image_path,rental_fee', 'items.book.authors:id,name', 'returns.items.loanItem.book:id,title,book_code', 'deposit', 'deposit.settlement'])
+            ->with(['issuer:id,name', 'items.book:id,title,book_code,cover_image_path,rental_fee', 'items.book.authors:id,name', 'returns.items.loanItem.book:id,title,book_code', 'deposit', 'deposit.settlement', 'fines:id,loan_id,amount,status'])
             ->where('reader_id', $request->user()->id)
             ->latest('issued_at')
             ->paginate(max(1, min($request->integer('per_page', 10), 50)));
 
+        $loans->getCollection()->each(fn (Loan $loan) => $loan->setAttribute('money_summary', $this->moneySummary($loan)));
         return response()->json($loans);
     }
 
@@ -101,17 +104,18 @@ class LoanController extends Controller
     public function showMine(Request $request, Loan $loan): JsonResponse
     {
         abort_unless($loan->reader_id === $request->user()->id, 404);
-        return response()->json(['loan' => $loan->load([
+        $loan->load([
             'issuer:id,name', 'items.book:id,title,book_code,cover_image_path',
             'returns.items.loanItem.book:id,title,book_code', 'deposit.settlement',
             'fines.payments.receivedBy:id,name', 'fines.waivedBy:id,name',
-        ])]);
+        ]);
+        $loan->setAttribute('money_summary', $this->moneySummary($loan));
+        return response()->json(['loan' => $loan]);
     }
 
     public function show(Loan $loan): JsonResponse
     {
-        return response()->json([
-            'loan' => $loan->load([
+        $loan->load([
                 'reader:id,name,email',
                 'reader.readerProfile:id,user_id,reader_code',
                 'issuer:id,name',
@@ -124,8 +128,30 @@ class LoanController extends Controller
                 'fines.payments.receivedBy:id,name',
                 'returns.returnedBy:id,name',
                 'returns.items.loanItem.book:id,title,book_code',
-            ]),
-        ]);
+            ]);
+        $loan->setAttribute('money_summary', $this->moneySummary($loan));
+        return response()->json(['loan' => $loan]);
+    }
+
+    private function moneySummary(Loan $loan): array
+    {
+        $deposit = $loan->deposit;
+        if (! $deposit) return ['status' => 'no_deposit', 'label' => 'Không có cọc', 'balance' => null];
+        $depositCents = (int) round((float) $deposit->amount * 100);
+        $fineCents = $loan->fines->where('status', 'unpaid')->sum(fn (Fine $fine) => (int) round((float) $fine->amount * 100));
+        $complete = $loan->items->every(fn ($item) => $item->returned_quantity + $item->lost_quantity >= $item->quantity);
+        $hasPendingPayment = $loan->fines->where('status', 'unpaid')->contains(fn (Fine $fine) => $fine->checkoutPayment && in_array($fine->checkoutPayment->status, ['pending', 'confirming'], true));
+        $status = $deposit->settlement ? 'settled' : ($hasPendingPayment ? 'pending_payment' : ($fineCents > $depositCents ? 'payment_due' : ($complete ? ($fineCents === $depositCents ? 'ready_to_settle' : 'refund_due') : 'deposit_held')));
+        $labels = ['settled' => 'Đã tất toán', 'pending_payment' => 'Chờ xử lý khoản phạt', 'payment_due' => 'Cần thanh toán', 'ready_to_settle' => 'Chờ tất toán', 'refund_due' => 'Chờ hoàn cọc', 'deposit_held' => 'Đang giữ cọc'];
+        return [
+            'status' => $status,
+            'label' => $labels[$status],
+            'deposit' => number_format($depositCents / 100, 2, '.', ''),
+            'unpaid_fines' => number_format($fineCents / 100, 2, '.', ''),
+            'balance' => number_format(($depositCents - $fineCents) / 100, 2, '.', ''),
+            'can_settle' => $complete && ! $deposit->settlement && ! $hasPendingPayment,
+            'settlement' => $deposit->settlement,
+        ];
     }
 
     public function returnItems(StoreLoanReturnRequest $request, Loan $loan, LibraryNotifier $notifier): JsonResponse

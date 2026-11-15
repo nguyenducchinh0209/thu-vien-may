@@ -27,6 +27,9 @@ class LoanDepositController extends Controller
             'refund_method' => ['nullable', 'in:cash,bank_transfer,manual'],
             'additional_method' => ['nullable', 'in:cash,bank_transfer,manual'],
             'receipt_note' => ['nullable', 'string', 'max:500'],
+            'expected_deposit_deduction' => ['nullable', 'numeric', 'min:0', 'decimal:0,2'],
+            'expected_refund' => ['nullable', 'numeric', 'min:0', 'decimal:0,2'],
+            'expected_additional_due' => ['nullable', 'numeric', 'min:0', 'decimal:0,2'],
         ]);
         [$settlementId, $created] = DB::transaction(function () use ($request, $loan, $data): array {
             $loan = Loan::query()->whereKey($loan->id)->lockForUpdate()->firstOrFail();
@@ -46,6 +49,15 @@ class LoanDepositController extends Controller
             $usedCents = min($depositCents, $fineCents);
             $refundCents = max(0, $depositCents - $fineCents);
             $additionalCents = max(0, $fineCents - $depositCents);
+            foreach ([
+                'expected_deposit_deduction' => $usedCents,
+                'expected_refund' => $refundCents,
+                'expected_additional_due' => $additionalCents,
+            ] as $field => $actualCents) {
+                if (isset($data[$field]) && (int) round((float) $data[$field] * 100) !== $actualCents) {
+                    abort(409, 'Số liệu cọc hoặc tiền phạt đã thay đổi. Hãy tải lại đối soát.');
+                }
+            }
             if ($refundCents > 0 && empty($data['refund_method'])) throw ValidationException::withMessages(['refund_method' => 'Chọn phương thức hoàn tiền cọc.']);
             if ($additionalCents > 0 && empty($data['additional_method'])) throw ValidationException::withMessages(['additional_method' => 'Chọn phương thức thu thêm tiền phạt.']);
             $settlement = LoanDepositSettlement::create([
@@ -91,6 +103,10 @@ class LoanDepositController extends Controller
         $fineCents = $fines->sum(fn (Fine $fine) => (int) round((float) $fine->amount * 100));
         return [
             'loan_id' => $loan->id, 'ready_to_settle' => $complete && ! $pending,
+            'money_status' => $loan->deposit->settlement ? 'settled' : ($fineCents > $depositCents ? 'payment_due' : ($complete ? ($fineCents === $depositCents ? 'ready_to_settle' : 'refund_due') : 'deposit_held')),
+            'deposit_balance' => number_format(($depositCents - $fineCents) / 100, 2, '.', ''),
+            'loss_protection_amount' => $loan->deposit->loss_protection_amount,
+            'book_holding_amount' => $loan->deposit->book_holding_amount,
             'all_copies_accounted_for' => $complete, 'pending_fine_payment' => $pending,
             'deposit' => $loan->deposit->amount, 'unpaid_fines' => $fines,
             'deposit_deduction' => number_format(min($depositCents, $fineCents) / 100, 2, '.', ''),

@@ -201,12 +201,16 @@ class LoanIssuanceService
             }
 
             $depositAmount = $this->moneyCents((string) $depositPayment['amount']);
-            if ($depositAmount <= 0) {
-                throw ValidationException::withMessages(['deposit_payment.amount' => 'Tiền cọc phải lớn hơn 0.']);
+            $copyCount = collect($items)->sum(fn (array $item): int => (int) $item['quantity']);
+            $expectedDepositAmount = $copyCount * 10000000;
+            if ($depositAmount !== $expectedDepositAmount) {
+                throw ValidationException::withMessages(['deposit_payment.amount' => 'Tiền cọc phải bằng 100.000đ cho mỗi bản sách.']);
             }
 
             $loan->deposit()->create([
                 'amount' => number_format($depositAmount / 100, 2, '.', ''),
+                'loss_protection_amount' => number_format(($copyCount * 7000000) / 100, 2, '.', ''),
+                'book_holding_amount' => number_format(($copyCount * 3000000) / 100, 2, '.', ''),
                 'method' => $depositPayment['method'],
                 'receipt_note' => $depositPayment['receipt_note'] ?? null,
                 'received_by' => $staff->id,

@@ -61,6 +61,7 @@ class FineController extends Controller
                 throw ValidationException::withMessages(['loan_item_id' => 'Không thể ghi mất sách khi phiếu đã kết thúc.']);
             }
             if ($data['type'] === 'lost') {
+                $data['amount'] = 70000 * $data['quantity'];
                 $available = $loanItem->quantity - $loanItem->returned_quantity - $loanItem->lost_quantity;
                 if ($data['quantity'] > $available) throw ValidationException::withMessages(['quantity' => "Chỉ còn {$available} bản có thể xác nhận mất."]);
                 $loanItem->increment('lost_quantity', $data['quantity']);

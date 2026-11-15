@@ -8,11 +8,11 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class LoanDeposit extends Model
 {
-    protected $fillable = ['loan_id', 'amount', 'method', 'receipt_note', 'received_by', 'received_at'];
+    protected $fillable = ['loan_id', 'amount', 'loss_protection_amount', 'book_holding_amount', 'method', 'receipt_note', 'received_by', 'received_at'];
 
     protected function casts(): array
     {
-        return ['amount' => 'decimal:2', 'received_at' => 'datetime'];
+        return ['amount' => 'decimal:2', 'loss_protection_amount' => 'decimal:2', 'book_holding_amount' => 'decimal:2', 'received_at' => 'datetime'];
     }
 
     public function loan(): BelongsTo
