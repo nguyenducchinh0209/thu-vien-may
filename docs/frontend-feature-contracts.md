@@ -1,12 +1,12 @@
 # Frontend tài khoản, thanh toán, VIP và hỗ trợ
 
-Backend đọc [BACKEND-HANDOFF.md](BACKEND-HANDOFF.md) để biết hợp đồng API và các quy tắc dữ liệu hiện hành. Các endpoint hồ sơ, VIP, thanh toán, đặt trước và đọc EPUB đã được triển khai trong nhánh tích hợp này.
+Backend đọc [BACKEND-HANDOFF.md](BACKEND-HANDOFF.md) để biết hợp đồng API và các quy tắc dữ liệu hiện hành. Các endpoint hồ sơ, VIP, thanh toán, đặt trước, đọc EPUB và chat AI đã được triển khai trong nhánh tích hợp này.
 
-Frontend được phục vụ trực tiếp từ `public/library`, không cần build Vite. API code cho giới tính, VIP, thanh toán và quy trình đặt trước đã được thêm, nhưng layout giữ các cờ này tắt cho tới khi các migration của nhánh được áp dụng. Chat luôn tắt trong phạm vi này. Chuyển khoản chỉ là mô phỏng, không có QR hoặc kết nối ngân hàng; nhân viên phải xác nhận thủ công trước khi khoản thu được ghi nhận.
+Frontend được phục vụ trực tiếp từ `public/library`, không cần build Vite. API code cho giới tính, VIP, thanh toán và quy trình đặt trước đã được thêm, nhưng layout giữ các cờ này tắt cho tới khi các migration của nhánh được áp dụng. Chat được bật khi máy chủ đã cấu hình `GEMINI_API_KEY`; khóa không được gửi xuống trình duyệt. Chuyển khoản chỉ là mô phỏng, không có QR hoặc kết nối ngân hàng; nhân viên phải xác nhận thủ công trước khi khoản thu được ghi nhận.
 
 ## Cấu hình tính năng
 
-Layout đặt cấu hình trước **các script defer**. Sau khi áp dụng migration và kiểm tra các endpoint trên database triển khai, bật các cờ đã hoàn tất; giữ chat tắt vì API chat chưa thuộc phạm vi tích hợp. Không đặt khóa AI/cổng thanh toán trong trình duyệt.
+Layout đặt cấu hình trước **các script defer**. Sau khi áp dụng migration và kiểm tra các endpoint trên database triển khai, bật các cờ đã hoàn tất. Không đặt khóa AI/cổng thanh toán trong trình duyệt.
 
 ```js
 window.libraryFeatureConfig = {
@@ -15,7 +15,7 @@ window.libraryFeatureConfig = {
     plans: false,
     payments: false,
     reservationWorkflow: false,
-    chat: false,
+    chat: true, // Chỉ bật khi máy chủ có cấu hình khóa AI.
     gender: false,
   },
   endpoints: {
@@ -101,9 +101,9 @@ Trạng thái: `pending`, `confirming`, `paid`, `failed`, `cancelled`, `expired`
 
 ## Chat
 
-POST `/support/chat`, body `{message, history: [{role: 'user'|'assistant', content}]}`; chỉ gửi tối đa 8 tin nhắn ngữ cảnh trước đó. Trả `{answer: 'Câu trả lời', books: [{id: 3, title: 'Tên sách'}]}`. Tin nhắn tối đa 2.000 ký tự ở client, backend cần tự giới hạn/xác thực tương ứng.
+POST `/support/chat`, body `{message, history: [{role: 'user'|'assistant', content}]}`; server xác thực tin nhắn tối đa 2.000 ký tự và tối đa 8 lượt ngữ cảnh trước đó, giới hạn 10 yêu cầu/phút theo IP, sau đó gọi Gemini `generateContent` với JSON response schema. Trả `{answer: 'Câu trả lời', books: [{id: 3, title: 'Tên sách'}]}`. Cấu hình `GEMINI_API_KEY`; model mặc định `gemini-4-hydrogen`, có thể đổi `GEMINI_MODEL` hoặc `GEMINI_ENDPOINT`. Gemini API có hạn mức theo gói, model và khu vực; Google cho biết nội dung ở gói miễn phí có thể được dùng để cải thiện sản phẩm. Lỗi thiếu khóa trả 503; lỗi dịch vụ AI trả 502.
 
-Chỉ hỗ trợ hướng dẫn và danh mục công khai. Backend quản lý khóa AI, giới hạn tần suất và chỉ dẫn hệ thống; không cho công cụ AI thực hiện thanh toán/đặt sách. Frontend hiển thị câu trả lời dạng văn bản đã escape, không thực thi HTML. Hội thoại chỉ nằm trong bộ nhớ tab, xóa khi đổi tài khoản hoặc đăng xuất; phản hồi đến muộn bị bỏ qua.
+Chỉ gửi lịch sử chat và một phần danh mục sách công khai liên quan. Không gửi hồ sơ/ngữ cảnh tài khoản; không cho mô hình công cụ thực hiện đặt sách hay thanh toán. ID sách trả về được kiểm tra lại với danh mục server. Người dùng được nhắc không nhập mật khẩu/thông tin cá nhân; tin nhắn được gửi tới nhà cung cấp AI. Frontend hiển thị câu trả lời dạng văn bản đã escape, không thực thi HTML. Hội thoại chỉ nằm trong bộ nhớ tab, xóa khi đổi tài khoản hoặc đăng xuất; phản hồi đến muộn bị bỏ qua.
 
 ## Điều hướng và kiểm thử
 

@@ -34,7 +34,7 @@
                 payments: true,
                 reservationWorkflow: true,
                 gender: true,
-                chat: false,
+                chat: {{ filled(config('services.ai.api_key')) ? 'true' : 'false' }},
             },
         };
     </script>

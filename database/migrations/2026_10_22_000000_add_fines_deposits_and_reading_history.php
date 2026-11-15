@@ -9,20 +9,39 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('loan_items', function (Blueprint $table): void {
-            $table->unsignedInteger('lost_quantity')->default(0);
-            $table->unsignedInteger('written_off_quantity')->default(0);
+        $hasLostQuantity = Schema::hasColumn('loan_items', 'lost_quantity');
+        $hasWrittenOffQuantity = Schema::hasColumn('loan_items', 'written_off_quantity');
+
+        if (!$hasLostQuantity || !$hasWrittenOffQuantity) {
+            Schema::table('loan_items', function (Blueprint $table) use ($hasLostQuantity, $hasWrittenOffQuantity): void {
+                if (!$hasLostQuantity) {
+                    $table->unsignedInteger('lost_quantity')->default(0);
+                }
+
+                if (!$hasWrittenOffQuantity) {
+                    $table->unsignedInteger('written_off_quantity')->default(0);
+                }
+            });
+        }
+
+        Schema::table('fines', function (Blueprint $table): void {
+            $table->dropForeign(['loan_return_item_id']);
         });
 
         Schema::table('fines', function (Blueprint $table): void {
-            $table->dropUnique('fines_loan_return_item_id_unique');
+            $table->dropUnique(['loan_return_item_id']);
+            $table->unsignedBigInteger('loan_return_item_id')->nullable()->change();
+            $table->index('loan_return_item_id');
+            $table->foreign('loan_return_item_id')->references('id')->on('loan_return_items')->restrictOnDelete();
+        });
+
+        Schema::table('fines', function (Blueprint $table): void {
             $table->foreignId('loan_item_id')->nullable()->after('loan_return_item_id')->constrained()->restrictOnDelete();
             $table->string('fine_code', 32)->nullable()->unique()->after('id');
             $table->string('type', 32)->default('overdue')->index();
             $table->text('reason')->nullable();
             $table->foreignId('created_by')->nullable()->constrained('users')->restrictOnDelete();
             $table->string('request_key', 80)->nullable()->unique();
-            $table->foreignId('loan_return_item_id')->nullable()->change();
             $table->index(['loan_id', 'type', 'status']);
         });
 

@@ -22,6 +22,7 @@ use App\Http\Controllers\ReaderController;
 use App\Http\Controllers\ReadingBooksController;
 use App\Http\Controllers\ReservationController;
 use App\Http\Controllers\ReviewController;
+use App\Http\Controllers\SupportChatController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', LibraryPageController::class)->name('library');
@@ -36,6 +37,7 @@ Route::post('/auth/login', [AuthController::class, 'login'])->middleware('thrott
 Route::post('/auth/forgot-password', [AuthController::class, 'sendPasswordResetLink'])->middleware('throttle:5,1')->name('auth.password.email');
 Route::get('/password/reset/{token}', fn (string $token) => view('auth.reset-password', ['token' => $token, 'email' => request('email')]))->name('password.reset');
 Route::post('/password/reset', [AuthController::class, 'resetPassword'])->middleware('throttle:5,1')->name('password.update');
+Route::post('/support/chat', SupportChatController::class)->middleware('throttle:10,1')->name('support.chat');
 Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('auth')->name('auth.logout');
 Route::get('/auth/session', fn () => response()->json([
     'user' => request()->user()?->only(['id', 'name', 'email', 'role']),

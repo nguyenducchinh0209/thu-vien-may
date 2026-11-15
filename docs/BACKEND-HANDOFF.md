@@ -2,7 +2,7 @@
 
 ## 1. Current implementation status
 
-This integration branch includes the reservation payment workflow, manual cash and simulated-transfer confirmation, VIP membership, profile gender, and protected EPUB reading APIs. AI chat remains disabled and is not implemented. The later sections retain the original handoff notes; where they describe work as pending, use the current routes, controllers, migrations, and tests as the source of truth.
+This integration branch includes the reservation payment workflow, manual cash and simulated-transfer confirmation, VIP membership, profile gender, protected EPUB reading, and a server-side AI support chat. The later sections retain the original handoff notes; where they describe work as pending, use the current routes, controllers, migrations, and tests as the source of truth.
 
 The original “Đã giữ” symptom came from the earlier implementation having no reservation payment state. This branch adds that state and the payment APIs described below. The layout keeps the feature flags off until the matching additive migrations have been applied to the target database; never enable them to conceal a missing schema. The current payload and UI behavior are documented in [frontend-feature-contracts.md](frontend-feature-contracts.md).
 
@@ -186,7 +186,7 @@ Giữ cờ tắt ở môi trường chưa migrate hoặc chưa có cấu hình n
 | Gói hiện tại | GET `/my/membership` | `memberships` (user, plan nullable, status, starts_at, expires_at, payment_id nullable unique); không suy VIP chỉ từ lời chọn trả tiền mặt. Free là trạng thái được API xác nhận rõ. |
 | Gói VIP | GET `/membership/plans` | `membership_plans`: mã ổn định, tên, price decimal, currency, duration, benefits JSON, active. API trả `id,name,price,duration_label,benefits` như frontend chờ. Giá/quyền lợi nhập từ chính sách thư viện. |
 | Thu tiền VIP | Quote/payment API dùng `purpose=vip` | Quote snapshot plan, liên kết membership/payment; chỉ tạo/gia hạn membership khi paid trong transaction, một payment chỉ kích hoạt một lần. Chính sách cộng hạn khi đang VIP phải chốt và áp dụng tại server. |
-| Chat hỗ trợ | POST `/support/chat` → `{answer,books:[{id,title}]}` | Không bắt buộc table chat: hội thoại hiện giữ trong bộ nhớ tab. Backend gọi dịch vụ AI bằng khóa server, giới hạn tần suất/ngữ cảnh; chỉ danh mục công khai, không thao tác đặt/thu tiền hoặc đọc hồ sơ mượn riêng tư. |
+| Chat hỗ trợ | POST `/support/chat` → `{answer,books:[{id,title}]}` | Không cần table chat: hội thoại giữ trong bộ nhớ tab. Cấu hình `GEMINI_API_KEY` (tùy chọn `GEMINI_MODEL`, `GEMINI_ENDPOINT`); server giới hạn 10 request/phút/IP, tối đa 8 lượt ngữ cảnh và 2.000 ký tự/tin nhắn. Dùng Gemini `generateContent` với model Hydrogen; chỉ gửi một phần danh mục công khai, không thao tác đặt/thu tiền hoặc đọc hồ sơ riêng tư. Gói miễn phí có thể dùng nội dung để cải thiện sản phẩm và có hạn mức thay đổi theo tài khoản/model. |
 
 ## 9. Kiểm tra nghiệm thu backend
 

@@ -2,7 +2,7 @@
 
 ## Frontend and backend handoff
 
-The responsive account sidebar and account, membership, payment and reading screens are documented in [Frontend API contracts](docs/frontend-feature-contracts.md). This branch includes the reservation payment, VIP membership, profile gender and EPUB reading APIs. Bank transfer is a clearly labelled simulation that requires staff confirmation; it does not move real money. AI chat remains disabled and is outside this integration. [Backend handoff](docs/BACKEND-HANDOFF.md) documents the current API and workflow rules.
+The responsive account sidebar and account, membership, payment, reading and AI chat features are documented in [Frontend API contracts](docs/frontend-feature-contracts.md). This branch includes the reservation payment, VIP membership, profile gender, EPUB reading and AI-powered library assistant APIs. Bank transfer is a clearly labelled simulation that requires staff confirmation; it does not move real money. Configure `GEMINI_API_KEY` in `.env` to enable the chat; the key stays on the server. [Backend handoff](docs/BACKEND-HANDOFF.md) documents the current API and workflow rules.
 
 ## Environment
 
