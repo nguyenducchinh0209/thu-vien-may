@@ -23,10 +23,10 @@ class BookSuggestionController extends Controller
     public function store(StoreBookSuggestionRequest $request, LibraryNotifier $notifier): JsonResponse
     {
         $suggestion = BookSuggestion::create($request->validated() + ['user_id' => $request->user()->id]);
-        $notifier->staff(
+        $notifier->librarians(
             'Có đề xuất sách mới',
             "Độc giả {$request->user()->name} đề xuất sách “{$suggestion->title}”.",
-            $request->user(),
+            'librarian-home',
         );
 
         return response()->json([

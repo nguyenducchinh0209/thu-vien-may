@@ -6,6 +6,7 @@ use App\Models\Author;
 use App\Models\Book;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class RealBookCatalogSeeder extends Seeder
 {
@@ -27,20 +28,27 @@ class RealBookCatalogSeeder extends Seeder
 
         DB::transaction(function () use ($books): void {
             foreach ($books as $index => [$title, $authorName, $category, $isbn, $publisher, $year, $edition, $fee, $description]) {
-                $author = Author::query()->firstOrCreate(['name' => $authorName]);
                 $code = 'BKREAL'.str_pad((string) ($index + 1), 3, '0', STR_PAD_LEFT);
                 $book = Book::withTrashed()
                     ->where('isbn', $isbn)
                     ->orWhere('book_code', $code)
-                    ->first() ?? new Book();
-
-                if ($book->trashed()) {
-                    $book->restore();
+                    ->first();
+                if ($book) {
+                    continue;
                 }
 
                 $detailExtension = $index === 0 ? 'webp' : 'jpg';
+                $cover = 'book-covers/'.$code.'-v2.png';
+                $previews = ['book-previews/'.$code.'-detail.'.$detailExtension];
+                foreach (['02', '03'] as $page) {
+                    $preview = 'book-previews/'.$code.'-test-page-'.$page.'.png';
+                    if (Storage::disk('local')->exists($preview)) {
+                        $previews[] = $preview;
+                    }
+                }
 
-                $book->fill([
+                $author = Author::query()->firstOrCreate(['name' => $authorName]);
+                $book = Book::create([
                     'book_code' => $code,
                     'title' => $title,
                     'category' => $category,
@@ -49,11 +57,11 @@ class RealBookCatalogSeeder extends Seeder
                     'publisher' => $publisher,
                     'publication_year' => $year,
                     'edition' => $edition,
-                    'cover_image_path' => 'book-covers/'.$code.'.jpg',
+                    'cover_image_path' => Storage::disk('public')->exists($cover) ? $cover : 'book-covers/'.$code.'.jpg',
                     'total_quantity' => 5,
                     'rental_fee' => $fee,
-                    'preview_pages' => ['book-previews/'.$code.'-detail.'.$detailExtension],
-                ])->save();
+                    'preview_pages' => $previews,
+                ]);
 
                 $book->authors()->syncWithoutDetaching([$author->id]);
             }

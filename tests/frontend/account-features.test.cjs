@@ -127,7 +127,7 @@ test('fine payment action only appears for unpaid fines and fee checkout resumes
   const existing={id:'fine-pay',quote_id:quoteData.id,method:'bank_transfer',status:'pending',transfer:{simulated:true,bank_name:'Demo Bank'}};
   const calls=[];const h=harness({capabilities:{payments:true}},async(url,options)=>{calls.push({url,options});return response({quote:quoteData,payment:existing});});
   h.feature.setRoute('checkout/fine/52');h.context.state.page='checkout';h.feature.enter();await tick();
-  assert.match(h.feature.view(),/Thanh toán khoản phạt/);assert.match(h.feature.view(),/Demo Bank/);assert.doesNotMatch(h.feature.view(),/data-payment-create/);
+  assert.match(h.feature.view(),/Thanh toán khoản phạt/);assert.match(h.feature.view(),/payment-demo-qr\.svg/);assert.doesNotMatch(h.feature.view(),/data-payment-create/);
   assert.equal(calls.length,1);assert.equal(calls[0].url,'http://localhost/my/payment-quotes');
   assert.deepEqual(JSON.parse(calls[0].options.body),{purpose:'fine',reference_id:'52'});
 });
@@ -203,7 +203,14 @@ test('server avatar URLs render in the account profile and account menu',()=>{
 });
 test('staff menus retain profile and logout without offering VIP registration',()=>{
   const h=harness();h.feature.init();
-  for(const role of ['Admin','Thủ thư']){h.context.authSession.role=role;h.feature.syncMenu();const html=h.elements.get('account-menu').innerHTML;assert.match(html,/Sửa thông tin cá nhân/);assert.match(html,/data-auth-logout/);assert.doesNotMatch(html,/Đăng ký VIP|Xem gói VIP/);}
+  for(const role of ['Admin','Thủ thư']){
+    h.context.authSession.role=role;h.feature.syncMenu();
+    const html=h.elements.get('account-menu').innerHTML;
+    assert.match(html,/Sửa thông tin cá nhân/);
+    assert.match(html,/data-auth-logout/);
+    assert.doesNotMatch(html,/Đăng ký VIP|Xem gói VIP/);
+    if(role==='Admin')assert.doesNotMatch(html,/Gói tài khoản/);
+  }
 });
 test('VIP plans come only from valid server data and link to the selected checkout',async()=>{
   const h=harness({capabilities:{plans:true}},async()=>response({plans:[{id:'month',name:'VIP Month',price:100000,duration_label:'1 tháng',benefits:['A benefit']}]}));
@@ -254,12 +261,12 @@ test('paid VIP refreshes membership; cash registration alone never activates VIP
   h.feature.init();h.context.state.page='checkout';h.feature.setRoute('checkout/vip/7');h.feature.enter();await tick();h.fire('[data-payment-create]');await tick();assert.equal(memberships,0);
   status='paid';h.fire('[data-payment-check]');await tick();assert.equal(memberships,1);assert.match(h.elements.get('account-menu').innerHTML,/Xem gói VIP/);
 });
-test('payment outcomes render from the API and demo transfer details never imply real payment or QR',async()=>{
-  for(const [status,label] of Object.entries({pending:'Chờ thanh toán',confirming:'Đang xác nhận',failed:'Thanh toán thất bại',cancelled:'Giao dịch đã hủy',expired:'Đã hết hạn',weird:'Chưa xác định được trạng thái'})){
+test('payment outcomes render from the API and only the local demo QR can appear for simulated transfers',async()=>{
+  for(const [status,label] of Object.entries({pending:'Chờ thanh toán',confirming:'Đang xác nhận',failed:'Thanh toán thất bại',cancelled:'Giao dịch đã hủy',expired:'Đã hết hạn',refunded:'Đã hoàn phí',weird:'Chưa xác định được trạng thái'})){
     const h=harness({capabilities:{payments:true,reservationWorkflow:true}},async(url)=>response(url.endsWith('payment-quotes')?{quote:quote()}:{payment:{id:'p-1',quote_id:'q-1',method:'bank_transfer',status,transfer:{simulated:true,qr_url:'javascript:alert(1)',bank_name:'API Bank',content:'<reference>'}}}));
     h.feature.init();h.context.state.page='checkout';h.feature.setRoute('checkout/reservation/7');h.feature.enter();await tick();h.fire('[data-payment-create]');await tick();
     assert.ok(h.feature.view().includes(label));assert.doesNotMatch(h.feature.view(),/Thanh toán thành công|src="javascript:/);
-    if(['pending','confirming'].includes(status)){assert.match(h.feature.view(),/API Bank/);assert.match(h.feature.view(),/&lt;reference&gt;/);assert.match(h.feature.view(),/Mô phỏng – không chuyển tiền thật/);assert.doesNotMatch(h.feature.view(),/payment-qr|Chuyển khoản QR/);}
+    if(['pending','confirming'].includes(status)){assert.match(h.feature.view(),/payment-demo-qr\.svg/);assert.match(h.feature.view(),/dQw4w9WgXcQ/);assert.match(h.feature.view(),/không thanh toán thật/);assert.doesNotMatch(h.feature.view(),/API Bank|<reference>|&lt;reference&gt;/);}
   }
 });
 test('reservation and VIP checkout resume existing payments and report demo transfers through the payment endpoint',async()=>{
@@ -275,7 +282,7 @@ test('reservation and VIP checkout resume existing payments and report demo tran
       return response({payment:{...existing,status:'paid'}});
     });
     h.feature.init();h.context.state.page='checkout';h.feature.setRoute(`checkout/${purpose}/7`);h.feature.enter();await tick();
-    assert.match(h.feature.view(),/Chờ thanh toán/);assert.match(h.feature.view(),/Demo Bank/);assert.doesNotMatch(h.feature.view(),/data-payment-create/);
+    assert.match(h.feature.view(),/Chờ thanh toán/);assert.match(h.feature.view(),/payment-demo-qr\.svg/);assert.doesNotMatch(h.feature.view(),/data-payment-create/);
     h.fire('[data-payment-report]');await tick();
     assert.equal(calls.filter(call=>call.url.endsWith('/transfer')).length,1);assert.match(h.feature.view(),/Đang xác nhận/);
     h.fire('[data-payment-check]');await tick();assert.match(h.feature.view(),/Thanh toán thành công/);

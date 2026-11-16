@@ -13,6 +13,7 @@ class LibraryWorkflowNotification extends Notification
         private readonly string $title,
         private readonly string $message,
         private readonly string $route,
+        private readonly string $audience,
     ) {}
 
     public function via(object $notifiable): array
@@ -26,6 +27,7 @@ class LibraryWorkflowNotification extends Notification
             'title' => $this->title,
             'message' => $this->message,
             'route' => $this->route,
+            'audience' => $this->audience,
         ];
     }
 }

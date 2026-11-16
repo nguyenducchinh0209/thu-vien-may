@@ -4,19 +4,18 @@ namespace App\Services;
 
 use App\Models\Book;
 use App\Models\Loan;
-use App\Models\LoanItem;
 use App\Models\Payment;
 use App\Models\PaymentQuote;
 use App\Models\Reservation;
 use App\Models\User;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class LoanIssuanceService
 {
+    public function __construct(private readonly BookAvailability $availability) {}
+
     public function issueReservation(User $staff, int $reservationId, array $payment, ?string $dueAt = null, ?array $depositPayment = null): Loan
     {
         return $this->issue($staff, 0, [], $payment, $reservationId, dueAt: $dueAt, depositPayment: $depositPayment);
@@ -32,7 +31,15 @@ class LoanIssuanceService
      */
     public function issue(User $staff, int $readerId, array $items, array $payment, ?int $reservationId = null, ?Payment $paidPayment = null, ?string $dueAt = null, ?array $depositPayment = null, ?string $issuanceKey = null): Loan
     {
-        return DB::transaction(function () use ($staff, $readerId, $items, $payment, $reservationId, $paidPayment, $dueAt, $depositPayment, $issuanceKey): Loan {
+        // Lookup immutable keys before opening the transaction so it creates its
+        // inventory snapshot only after acquiring the stock locks.
+        $reservationInfo = $reservationId === null ? null : Reservation::query()->find($reservationId, ['book_id', 'reader_id']);
+        if ($reservationId !== null && ! $reservationInfo) {
+            throw ValidationException::withMessages(['reservation_id' => 'Không tìm thấy yêu cầu đặt trước.']);
+        }
+        $readerId = $reservationInfo?->reader_id ?? $readerId;
+
+        return DB::transaction(function () use ($reservationInfo, $staff, $readerId, $items, $payment, $reservationId, $paidPayment, $dueAt, $depositPayment, $issuanceKey): Loan {
             if (! $depositPayment || (float) ($depositPayment['amount'] ?? 0) <= 0) {
                 throw ValidationException::withMessages(['deposit_payment.amount' => 'Nhập số tiền cọc đã thu trước khi giao sách.']);
             }
@@ -54,15 +61,14 @@ class LoanIssuanceService
                     return $existingLoan->load(['reader:id,name,email', 'items.book:id,title,book_code', 'deposit']);
                 }
             }
+            $reader = User::query()->whereKey($readerId)->lockForUpdate()->first();
             $reservation = null;
             $snapshotItems = [];
             if ($reservationId !== null) {
-                $reservationBookId = Reservation::query()->whereKey($reservationId)->value('book_id');
-                if ($reservationBookId === null) {
-                    throw ValidationException::withMessages(['reservation_id' => 'Không tìm thấy yêu cầu đặt trước.']);
-                }
-                Book::query()->whereKey($reservationBookId)->lockForUpdate()->first();
+                Book::query()->whereKey($reservationInfo->book_id)->lockForUpdate()->first();
                 $reservation = Reservation::query()->whereKey($reservationId)->lockForUpdate()->firstOrFail();
+                abort_unless($reservation->book_id === $reservationInfo->book_id
+                    && $reservation->reader_id === $readerId, 409, 'Yêu cầu đặt sách đã thay đổi.');
                 if (! $paidPayment && $reservation->payment_status !== null) {
                     throw ValidationException::withMessages([
                         'reservation_id' => 'Yêu cầu này đang dùng quy trình thanh toán; hãy xác nhận khoản thu trước khi giao sách.',
@@ -78,7 +84,7 @@ class LoanIssuanceService
                         || $reservation->payment_status !== 'paid') {
                         throw ValidationException::withMessages(['payment' => 'Khoản thanh toán chưa được xác nhận cho yêu cầu này.']);
                     }
-                    $quote = PaymentQuote::query()->whereKey($paidPayment->quote_id)->firstOrFail();
+                    $quote = PaymentQuote::query()->whereKey($paidPayment->quote_id)->lockForUpdate()->firstOrFail();
                     $snapshotItems = $quote->items_snapshot;
                     if (count($snapshotItems) !== 1
                         || (int) ($snapshotItems[0]['book_id'] ?? 0) !== (int) $reservation->book_id
@@ -97,13 +103,8 @@ class LoanIssuanceService
                 $items = [['book_id' => $reservation->book_id, 'quantity' => $reservation->quantity]];
             }
 
-            $reader = User::query()
-                ->where('role', 'Độc giả')
-                ->lockForUpdate()
-                ->find($readerId);
-
-            if (! $reader) {
-                throw ValidationException::withMessages(['reader_id' => 'Không tìm thấy độc giả đang hoạt động.']);
+            if (! $reader || $reader->role !== 'Độc giả' || $reader->is_locked) {
+                throw ValidationException::withMessages(['reader_id' => 'Chọn độc giả đang hoạt động để phát phiếu.']);
             }
 
             $bookIds = collect($items)->pluck('book_id')->map(fn ($id) => (int) $id)->unique()->sort()->values();
@@ -118,20 +119,11 @@ class LoanIssuanceService
                 throw ValidationException::withMessages(['items' => 'Có sách không còn trong danh mục hoạt động.']);
             }
 
-            $onLoan = LoanItem::query()
-                ->selectRaw('book_id, SUM(quantity - returned_quantity - lost_quantity) as outstanding_quantity')
-                ->whereIn('book_id', $bookIds)
-                ->whereHas('loan', fn (Builder $query) => $query->where('status', 'active'))
-                ->groupBy('book_id')
-                ->pluck('outstanding_quantity', 'book_id');
-
-            $reserved = $this->activeReservations($bookIds, $reservation?->id, $reservation === null);
+            $occupied = $this->availability->occupiedFor($bookIds->all(), $reservation?->id);
 
             foreach ($items as $index => $item) {
                 $book = $books->get((int) $item['book_id']);
-                $available = $book->total_quantity
-                    - (int) $onLoan->get($book->id, 0)
-                    - (int) $reserved->get($book->id, 0);
+                $available = max(0, $book->total_quantity - $occupied->get($book->id, 0));
 
                 if ($item['quantity'] > $available) {
                     throw ValidationException::withMessages([
@@ -141,7 +133,7 @@ class LoanIssuanceService
             }
 
             if ($paidPayment) {
-                $totalCents = $this->moneyCents((string) $paidPayment->amount);
+                $totalCents = LibraryMoney::minor((string) $paidPayment->amount);
                 $receivedCents = $totalCents;
                 $receiptMethod = $paidPayment->method;
                 $receiptNote = $paidPayment->transfer_snapshot['simulated'] ?? false
@@ -153,9 +145,9 @@ class LoanIssuanceService
                 $totalCents = 0;
                 foreach ($items as $item) {
                     $book = $books->get((int) $item['book_id']);
-                    $totalCents += (int) round((float) $book->rental_fee * 100) * (int) $item['quantity'];
+                    $totalCents += LibraryMoney::minor((string) $book->rental_fee) * (int) $item['quantity'];
                 }
-                $receivedCents = (int) round((float) $payment['amount'] * 100);
+                $receivedCents = LibraryMoney::minor((string) $payment['amount']);
                 if ($receivedCents !== $totalCents) {
                     throw ValidationException::withMessages([
                         'rental_fee_payment.amount' => 'Số tiền đã thu phải bằng tổng phí mượn do máy chủ tính.',
@@ -175,13 +167,15 @@ class LoanIssuanceService
             $loan = Loan::create([
                 'reader_id' => $readerId,
                 'issued_by' => $staff->id,
+                'reader_name_snapshot' => $reader->name,
+                'issuer_name_snapshot' => $staff->name,
                 'issued_at' => $issuedAt,
                 'due_at' => $dueDate,
                 'status' => 'active',
                 'reservation_id' => $reservation?->id,
                 'payment_id' => $paidPayment?->id,
-                'rental_fee_total' => number_format($totalCents / 100, 2, '.', ''),
-                'rental_fee_received' => number_format($receivedCents / 100, 2, '.', ''),
+                'rental_fee_total' => LibraryMoney::decimal($totalCents),
+                'rental_fee_received' => LibraryMoney::decimal($receivedCents),
                 'rental_fee_received_at' => $receivedAt,
                 'rental_fee_received_by' => $receivedBy,
                 'rental_fee_payment_method' => $receiptMethod,
@@ -196,11 +190,13 @@ class LoanIssuanceService
                 $loan->items()->create([
                     'book_id' => $book->id,
                     'quantity' => $item['quantity'],
+                    'book_title_snapshot' => $book->title,
+                    'book_code_snapshot' => $book->book_code,
                     'rental_fee_per_copy' => $snapshotUnitAmount,
                 ]);
             }
 
-            $depositAmount = $this->moneyCents((string) $depositPayment['amount']);
+            $depositAmount = LibraryMoney::minor((string) $depositPayment['amount']);
             $copyCount = collect($items)->sum(fn (array $item): int => (int) $item['quantity']);
             $expectedDepositAmount = $copyCount * 10000000;
             if ($depositAmount !== $expectedDepositAmount) {
@@ -208,9 +204,9 @@ class LoanIssuanceService
             }
 
             $loan->deposit()->create([
-                'amount' => number_format($depositAmount / 100, 2, '.', ''),
-                'loss_protection_amount' => number_format(($copyCount * 7000000) / 100, 2, '.', ''),
-                'book_holding_amount' => number_format(($copyCount * 3000000) / 100, 2, '.', ''),
+                'amount' => LibraryMoney::decimal($depositAmount),
+                'loss_protection_amount' => LibraryMoney::decimal($copyCount * 7000000),
+                'book_holding_amount' => LibraryMoney::decimal($copyCount * 3000000),
                 'method' => $depositPayment['method'],
                 'receipt_note' => $depositPayment['receipt_note'] ?? null,
                 'received_by' => $staff->id,
@@ -226,37 +222,5 @@ class LoanIssuanceService
 
             return $loan;
         }, 3);
-    }
-
-    private function moneyCents(string $value): int
-    {
-        if (! preg_match('/^(\d+)(?:\.(\d{1,2}))?$/', $value, $matches)) {
-            throw new \InvalidArgumentException('Invalid stored monetary amount.');
-        }
-
-        return ((int) $matches[1] * 100) + (int) str_pad($matches[2] ?? '', 2, '0');
-    }
-
-    /**
-     * @param  Collection<int, int>  $bookIds
-     * @return Collection<int, int>
-     */
-    private function activeReservations(Collection $bookIds, ?int $exceptId = null, bool $includePending = true): Collection
-    {
-        return Reservation::query()
-            ->selectRaw('book_id, SUM(quantity) as reserved_quantity')
-            ->whereIn('book_id', $bookIds)
-            ->where(function (Builder $query) use ($includePending): void {
-                if ($includePending) {
-                    $query->where('status', 'pending')->orWhere(function (Builder $query): void {
-                        $query->where('status', 'ready')->where('expires_at', '>', now());
-                    });
-                } else {
-                    $query->where('status', 'ready')->where('expires_at', '>', now());
-                }
-            })
-            ->when($exceptId, fn (Builder $query) => $query->where('id', '!=', $exceptId))
-            ->groupBy('book_id')
-            ->pluck('reserved_quantity', 'book_id');
     }
 }

@@ -17,6 +17,7 @@ class StoreLoanReturnRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'return_key' => ['nullable', 'string', 'max:80'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.loan_item_id' => ['required', 'integer', 'distinct', 'exists:loan_items,id'],
             'items.*.quantity' => ['required', 'integer', 'min:1'],

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\StoreBookRequest;
 use App\Http\Requests\UpdateBookRequest;
 use App\Models\Book;
+use App\Services\BookAvailability;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -81,17 +82,7 @@ class BookController extends Controller
         DB::transaction(function () use ($book, $validated, $authorIds, $hasAuthorIds): void {
             $lockedBook = Book::query()->whereKey($book->id)->lockForUpdate()->firstOrFail();
             if (array_key_exists('total_quantity', $validated)) {
-                $onLoan = (int) DB::table('loan_items')
-                    ->join('loans', 'loans.id', '=', 'loan_items.loan_id')
-                    ->where('loan_items.book_id', $lockedBook->id)
-                    ->where('loans.status', 'active')
-                    ->sum(DB::raw('loan_items.quantity - loan_items.returned_quantity - loan_items.lost_quantity'));
-                $reserved = (int) DB::table('reservations')
-                    ->where('book_id', $lockedBook->id)
-                    ->where('status', 'ready')
-                    ->where('expires_at', '>', now())
-                    ->sum('quantity');
-                if ($validated['total_quantity'] < $onLoan + $reserved) {
+                if ($validated['total_quantity'] < app(BookAvailability::class)->occupied($lockedBook)) {
                     throw \Illuminate\Validation\ValidationException::withMessages([
                         'total_quantity' => 'Tổng số bản không thể thấp hơn số đang mượn và đang được giữ.',
                     ]);
@@ -112,7 +103,16 @@ class BookController extends Controller
 
     public function destroy(Book $book): JsonResponse
     {
-        $book->delete();
+        DB::transaction(function () use ($book): void {
+            $locked = Book::query()->whereKey($book->id)->lockForUpdate()->firstOrFail();
+            if (app(BookAvailability::class)->occupied($locked) > 0
+                || DB::table('reservations')->where('book_id', $locked->id)->where('status', 'pending')->exists()) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'book' => 'Sách còn bản đang mượn hoặc yêu cầu đặt chưa xử lý.',
+                ]);
+            }
+            $locked->delete();
+        }, 3);
 
         return response()->json(['message' => 'Đã xóa sách.']);
     }

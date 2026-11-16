@@ -37,13 +37,20 @@ class ReservationFineCommunityTest extends TestCase
             ->assertUnprocessable()
             ->assertJsonValidationErrors('book_id');
 
-        $this->actingAs($staff)->postJson('/staff/loans', [
+        $this->getJson('/catalog/books/'.$book->id)
+            ->assertOk()->assertJsonPath('book.available_quantity', 2);
+
+        $walkIn = $this->actingAs($staff)->postJson('/staff/loans', [
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 1]],
             'rental_fee_payment' => ['amount' => '5000.00', 'method' => 'cash'],
             'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
-        ])->assertUnprocessable()
-            ->assertJsonValidationErrors('items.0.quantity');
+        ])->assertCreated()->json('loan');
+
+        $this->postJson("/staff/reservations/{$reservationId}/ready")->assertUnprocessable();
+        $this->postJson("/staff/loans/{$walkIn['id']}/returns", [
+            'items' => [['loan_item_id' => $walkIn['items'][0]['id'], 'quantity' => 1]],
+        ])->assertOk();
 
         $this->actingAs($staff)
             ->postJson("/staff/reservations/{$reservationId}/ready")
@@ -77,7 +84,7 @@ class ReservationFineCommunityTest extends TestCase
 
         $this->assertDatabaseHas('reservations', ['id' => $reservationId, 'status' => 'fulfilled']);
         $this->assertDatabaseHas('loans', ['reader_id' => $reader->id, 'status' => 'active']);
-        $this->assertSame(1, Loan::count());
+        $this->assertSame(1, Loan::query()->where('status', 'active')->count());
         $this->getJson('/staff/inventory?q=Reserved')
             ->assertOk()
             ->assertJsonPath('data.0.reserved_quantity', 0)
@@ -192,7 +199,7 @@ class ReservationFineCommunityTest extends TestCase
             'reader_id' => $reader->id,
             'items' => [['book_id' => $book->id, 'quantity' => 2]],
             'rental_fee_payment' => ['amount' => '10000.00', 'method' => 'cash'],
-            'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash'],
+            'deposit_payment' => ['amount' => '200000.00', 'method' => 'cash'],
         ])->assertCreated();
         $loanId = $loanResponse->json('loan.id');
         $loanItemId = $loanResponse->json('loan.items.0.id');

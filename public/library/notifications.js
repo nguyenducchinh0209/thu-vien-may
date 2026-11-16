@@ -12,7 +12,7 @@
   let open = false;
   let unreadCount = 0;
   let currentIds = new Set();
-  let requestPending = false;
+  let pendingIdentity = null;
 
   function render(payload = []) {
     const notifications = Array.isArray(payload) ? payload : [];
@@ -38,26 +38,30 @@
   }
 
   async function refresh() {
-    if (!authSession?.id || requestPending) {
-      if (!authSession?.id) clear();
+    const identity = authSession;
+    if (!identity?.id) {
+      clear();
       return;
     }
-    requestPending = true;
+    if (pendingIdentity === identity) return;
+    pendingIdentity = identity;
     try {
       const result = await authRequest('/my/notifications');
+      if (authSession !== identity) return;
       unreadCount = Number(result.unread_count) || 0;
       render(result.data || []);
     } catch (error) {
+      if (authSession !== identity) return;
       console.error('Không tải được thông báo:', error);
       if (!list.children.length) list.innerHTML = '<p class="notification-empty">Chưa tải được thông báo. Hãy thử lại sau.</p>';
     } finally {
-      requestPending = false;
+      if (pendingIdentity === identity) pendingIdentity = null;
     }
   }
 
   function clear() {
+    setOpen(false);
     unreadCount = 0;
-    currentIds = new Set();
     render([]);
   }
 
@@ -88,26 +92,30 @@
 
     if (event.target.closest('#notification-read-all')) {
       event.preventDefault();
+      const identity = authSession;
       try {
         await authRequest('/my/notifications/read-all', {method:'POST',body:{}});
+        if (authSession !== identity) return;
         unreadCount = 0;
         await refresh();
-      } catch (error) { toast(error.message); }
+      } catch (error) { if (authSession === identity) toast(error.message); }
       return;
     }
 
     const item = event.target.closest('[data-notification-id]');
     if (item && wrapper.contains(item)) {
       event.preventDefault();
+      const identity = authSession;
       const id = item.dataset.notificationId;
       const route = item.dataset.notificationRoute;
       if (currentIds.has(id)) {
         try { await authRequest(`/my/notifications/${encodeURIComponent(id)}/read`, {method:'POST',body:{}}); }
-        catch (error) { toast(error.message); }
+        catch (error) { if (authSession === identity) toast(error.message); }
       }
+      if (authSession !== identity) return;
       setOpen(false);
       await refresh();
-      if (route && allowedRoutes.has(route)) go(route);
+      if (authSession === identity && route && allowedRoutes.has(route)) go(route);
       return;
     }
 

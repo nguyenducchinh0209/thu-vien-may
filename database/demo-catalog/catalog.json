@@ -1,0 +1,44 @@
+[
+  {
+    "code": "BKCLASS001",
+    "title": "Tắt đèn",
+    "author": "Ngô Tất Tố",
+    "category": "Văn học Việt Nam",
+    "edition": "Bản số hóa Wikisource",
+    "description": "Tiểu thuyết kể về chị Dậu và gia đình trong một mùa sưu thuế ở làng quê Việt Nam. Bản đọc online gồm 27 chương của truyện trên Wikisource.",
+    "epub": "tat-den.epub",
+    "cover": "tat-den.jpg",
+    "sections": 27,
+    "source": "https://vi.wikisource.org/wiki/T%E1%BA%AFt_%C4%91%C3%A8n",
+    "cover_source": "https://commons.wikimedia.org/wiki/File:Tat_den.pdf",
+    "rental_fee": 6000
+  },
+  {
+    "code": "BKCLASS002",
+    "title": "Truyện Kiều",
+    "author": "Nguyễn Du",
+    "category": "Thơ Việt Nam",
+    "edition": "Bản Quốc ngữ Wikisource",
+    "description": "Truyện thơ lục bát, còn có tên Đoạn trường tân thanh, kể về những năm tháng lưu lạc của Thúy Kiều. Bản EPUB chia toàn văn thành các mục theo số câu để tiện đọc.",
+    "epub": "truyen-kieu.epub",
+    "cover": "truyen-kieu.jpg",
+    "sections": 9,
+    "source": "https://vi.wikisource.org/wiki/Truy%E1%BB%87n_Ki%E1%BB%81u",
+    "cover_source": "https://commons.wikimedia.org/wiki/File:ThuykieuTruyen.jpg",
+    "rental_fee": 8000
+  },
+  {
+    "code": "BKCLASS003",
+    "title": "Lục Vân Tiên",
+    "author": "Nguyễn Đình Chiểu",
+    "category": "Thơ Việt Nam",
+    "edition": "Bản Quốc ngữ 2.082 câu",
+    "description": "Truyện thơ lục bát kể về Lục Vân Tiên, Kiều Nguyệt Nga và những thử thách họ trải qua. EPUB giữ bốn phần trong bản Quốc ngữ 2.082 câu của Wikisource.",
+    "epub": "luc-van-tien.epub",
+    "cover": "luc-van-tien.jpg",
+    "sections": 4,
+    "source": "https://vi.wikisource.org/wiki/L%E1%BB%A5c_V%C3%A2n_Ti%C3%AAn_(b%E1%BA%A3n_Qu%E1%BB%91c_ng%E1%BB%AF_2082_c%C3%A2u)",
+    "cover_source": "https://commons.wikimedia.org/wiki/File:LucVanTientruyen.JPG",
+    "rental_fee": 7500
+  }
+]

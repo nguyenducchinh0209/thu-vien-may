@@ -40,10 +40,12 @@ class LoanDepositFineWorkflowTest extends TestCase
         ])->assertOk()->assertJsonPath('loan.id', $loanId);
         $this->assertSame(1, Loan::count());
 
+        $this->freezeTime();
+        Loan::query()->whereKey($loanId)->update(['due_at' => now()->subDays(27)]);
         $fineResponse = $this->postJson('/staff/fines', [
             'loan_item_id' => $loanItemId, 'type' => 'lost', 'quantity' => 1,
             'reason' => 'Độc giả xác nhận không thể thu hồi sách', 'amount' => '150000.00', 'request_key' => 'lost-DEP001-1',
-        ])->assertCreated()->assertJsonPath('fine.type', 'lost');
+        ])->assertCreated()->assertJsonPath('fine.type', 'lost')->assertJsonPath('fine.amount', '70000.00');
         $fineId = $fineResponse->json('fine.id');
         $this->assertDatabaseHas('books', ['id' => $book->id, 'total_quantity' => 0]);
         $this->assertDatabaseHas('loans', ['id' => $loanId, 'status' => 'returned']);
@@ -51,15 +53,20 @@ class LoanDepositFineWorkflowTest extends TestCase
         $this->actingAs($reader)->getJson('/my/loans/'.$loanId)->assertOk()->assertJsonPath('loan.deposit.amount', '100000.00');
 
         $this->actingAs($staff)->getJson("/staff/loans/{$loanId}/deposit/settlement")
-            ->assertOk()->assertJsonPath('additional_due', '50000.00')->assertJsonPath('refund', '0.00');
-        $payload = ['additional_method' => 'cash', 'receipt_note' => 'Đã thu tiền chênh lệch'];
+            ->assertOk()->assertJsonPath('additional_due', '51000.00')->assertJsonPath('refund', '0.00');
+        $this->postJson("/staff/loans/{$loanId}/deposit/settle", [
+            'additional_method' => 'cash',
+            'expected_additional_due' => '50000.00',
+        ])->assertConflict();
+        $payload = ['additional_method' => 'cash', 'receipt_note' => 'Đã thu tiền chênh lệch',
+            'expected_deposit_deduction' => '100000.00', 'expected_refund' => '0.00', 'expected_additional_due' => '51000.00'];
         $this->postJson("/staff/loans/{$loanId}/deposit/settle", $payload)->assertOk()
             ->assertJsonPath('settlement.deposit_used', '100000.00')
-            ->assertJsonPath('settlement.additional_received', '50000.00');
+            ->assertJsonPath('settlement.additional_received', '51000.00');
         $this->postJson("/staff/loans/{$loanId}/deposit/settle", $payload)->assertOk();
         $this->assertSame(1, LoanDepositSettlement::count());
         $this->assertDatabaseHas('fines', ['id' => $fineId, 'status' => 'paid']);
-        $this->assertDatabaseHas('loan_deposit_fine_allocations', ['fine_id' => $fineId, 'deposit_amount' => '100000.00', 'additional_amount' => '50000.00']);
+        $this->assertDatabaseHas('loan_deposit_fine_allocations', ['fine_id' => $fineId, 'deposit_amount' => '19000.00', 'additional_amount' => '51000.00']);
     }
 
     public function test_pending_fine_payment_must_be_cancelled_before_deposit_settlement(): void

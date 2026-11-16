@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class LoanItem extends Model
 {
-    protected $fillable = ['loan_id', 'book_id', 'quantity', 'returned_quantity', 'lost_quantity', 'written_off_quantity', 'rental_fee_per_copy'];
+    protected $fillable = ['loan_id', 'book_id', 'quantity', 'returned_quantity', 'lost_quantity', 'written_off_quantity', 'rental_fee_per_copy', 'book_title_snapshot', 'book_code_snapshot'];
 
     protected function casts(): array
     {

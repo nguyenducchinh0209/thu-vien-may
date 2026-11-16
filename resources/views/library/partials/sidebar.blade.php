@@ -7,7 +7,7 @@
       <nav class="side-nav" id="reader-nav" aria-label="Khu vực độc giả">
         <a href="#home" class="nav-link active" data-page="home"><span class="nav-icon" data-icon="home"></span><span>Khám phá</span></a>
         <a href="#catalog" class="nav-link" data-page="catalog"><span class="nav-icon" data-icon="book"></span><span>Danh mục sách</span></a>
-        <a href="#shelf" class="nav-link" data-page="shelf"><span class="nav-icon" data-icon="bookmark"></span><span>Kệ sách của tôi</span><span class="nav-count" id="shelf-count">2</span></a>
+        <a href="#shelf" class="nav-link" data-page="shelf"><span class="nav-icon" data-icon="bookmark"></span><span>Kệ sách của tôi</span><span class="nav-count" id="shelf-count">0</span></a>
         <a href="#cart" class="nav-link" data-page="cart"><span class="nav-icon" data-icon="bag"></span><span>Giỏ sách</span><span class="nav-count" id="cart-count">0</span></a>
         <a href="#reservations" class="nav-link" data-page="reservations"><span class="nav-icon" data-icon="clock"></span><span>Đặt trước</span></a>
         <a href="#fines" class="nav-link" data-page="fines"><span class="nav-icon" data-icon="chart"></span><span>Phí & vi phạm</span></a>
@@ -18,7 +18,7 @@
       <nav class="side-nav staff-nav" id="librarian-nav" aria-label="Nghiệp vụ thủ thư" hidden>
         <div class="side-caption side-caption-spaced">BÀN LÀM VIỆC</div>
         <a href="#librarian-home" class="nav-link" data-page="librarian-home"><span class="nav-icon" data-icon="chart"></span><span>Tổng quan</span></a>
-        <div class="side-caption side-caption-spaced">NGHIỆP VỤ</div>
+        <div class="side-caption side-caption-spaced">NGHIỆP VỤ TẠI QUẦY</div>
         <a href="#reservations" class="nav-link" data-page="reservations"><span class="nav-icon" data-icon="bookmark"></span><span>Yêu cầu đặt trước</span></a>
         <a href="#payments" class="nav-link" data-page="payments" data-feature="payments" hidden><span class="nav-icon" data-icon="chart"></span><span>Thanh toán</span></a>
         <a href="#loans" class="nav-link" data-page="loans"><span class="nav-icon" data-icon="book"></span><span>Phiếu mượn</span></a>
@@ -26,26 +26,17 @@
         <a href="#readers" class="nav-link" data-page="readers"><span class="nav-icon" data-icon="user"></span><span>Độc giả</span></a>
         <a href="#inventory" class="nav-link" data-page="inventory"><span class="nav-icon" data-icon="book"></span><span>Kho sách</span></a>
         <a href="#fines" class="nav-link" data-page="fines"><span class="nav-icon" data-icon="chart"></span><span>Vi phạm</span></a>
+        <a href="#reports" class="nav-link" data-page="reports"><span class="nav-icon" data-icon="chart"></span><span>Báo cáo</span></a>
         <div class="side-caption side-caption-spaced">TÀI KHOẢN</div>
         <a href="#profile" class="nav-link" data-page="profile"><span class="nav-icon" data-icon="user"></span><span>Hồ sơ cá nhân</span></a>
       </nav>
       <nav class="side-nav staff-nav" id="admin-nav" aria-label="Quản trị thư viện" hidden>
-        <div class="side-caption side-caption-spaced">QUẢN TRỊ</div>
-        <a href="#admin" class="nav-link" data-page="admin"><span class="nav-icon" data-icon="chart"></span><span>Tổng quan</span></a>
-        <div class="side-caption side-caption-spaced">DỮ LIỆU THƯ VIỆN</div>
-        <a href="#catalog" class="nav-link" data-page="catalog"><span class="nav-icon" data-icon="book"></span><span>Danh mục sách</span></a>
-        <a href="#authors" class="nav-link" data-page="authors"><span class="nav-icon" data-icon="user"></span><span>Tác giả</span></a>
-        <a href="#inventory" class="nav-link" data-page="inventory"><span class="nav-icon" data-icon="book"></span><span>Kho sách</span></a>
+        <a href="#admin" class="nav-link" data-page="admin"><span class="nav-icon" data-icon="home"></span><span>Tổng quan</span></a>
         <a href="#accounts" class="nav-link" data-page="accounts"><span class="nav-icon" data-icon="user"></span><span>Tài khoản & vai trò</span></a>
-        <div class="side-caption side-caption-spaced">MƯỢN TRẢ & BÁO CÁO</div>
-        <a href="#reservations" class="nav-link" data-page="reservations"><span class="nav-icon" data-icon="bookmark"></span><span>Đặt trước</span></a>
-        <a href="#payments" class="nav-link" data-page="payments" data-feature="payments" hidden><span class="nav-icon" data-icon="chart"></span><span>Thanh toán</span></a>
-        <a href="#loans" class="nav-link" data-page="loans"><span class="nav-icon" data-icon="book"></span><span>Phiếu mượn</span></a>
-        <a href="#returns" class="nav-link" data-page="returns"><span class="nav-icon" data-icon="clock"></span><span>Trả sách</span></a>
-        <a href="#readers" class="nav-link" data-page="readers"><span class="nav-icon" data-icon="user"></span><span>Độc giả</span></a>
-        <a href="#fines" class="nav-link" data-page="fines"><span class="nav-icon" data-icon="chart"></span><span>Phạt & vi phạm</span></a>
-        <div class="side-caption side-caption-spaced">TÀI KHOẢN</div>
-        <a href="#profile" class="nav-link" data-page="profile"><span class="nav-icon" data-icon="user"></span><span>Hồ sơ cá nhân</span></a>
+        <a href="#reports" class="nav-link" data-page="reports"><span class="nav-icon" data-icon="chart"></span><span>Báo cáo thư viện</span></a>
+        <a href="#inventory" class="nav-link" data-page="inventory"><span class="nav-icon" data-icon="book"></span><span>Kho sách</span></a>
+        <a href="#authors" class="nav-link" data-page="authors"><span class="nav-icon" data-icon="user"></span><span>Tác giả</span></a>
+        <a href="#fines" class="nav-link" data-page="fines"><span class="nav-icon" data-icon="chart"></span><span>Phạt & miễn phạt</span></a>
       </nav>
       <div class="sidebar-bottom">
         <div class="help-card" id="sidebar-help"><span class="help-spark">✳</span><strong>Đọc một chút<br>mỗi ngày nhé.</strong><p>10 phút cũng là một khởi đầu đẹp.</p><button class="text-button" data-page-link="catalog">Tìm sách hay <span>↗</span></button></div>

@@ -3,54 +3,45 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 
-const operationsSource = fs.readFileSync(require.resolve('../../public/library/operations.js'), 'utf8');
+const source = fs.readFileSync(require.resolve('../../public/library/operations.js'), 'utf8');
 
-test('authenticated staff can paginate while demo-only operations stay blocked', () => {
-  const listeners = new Map();
-  const loans = Array.from({length: 9}, (_, index) => ({
-    id: index + 1,
-    reader: `Reader ${index + 1}`,
-    book: `Book ${index + 1}`,
-    borrowed: '2026-10-20',
-    due: '2026-11-03',
-    status: 'Đang mượn',
-  }));
+test('staff requests the selected search, status and page from the API', async () => {
+  const requests = [];
   const context = vm.createContext({
     window: {libraryUser: {id: 1, role: 'Thủ thư'}},
-    labels: {},
-    location: {hash: ''},
-    state: {page: 'loans'},
-    localStorage: {
-      getItem(key) {
-        return key === 'may-loans' ? JSON.stringify(loans) : null;
-      },
-      setItem() {},
+    labels: {}, state: {page: 'loans'},
+    URLSearchParams,
+    authRequest: async path => {
+      requests.push(path);
+      return {current_page: 8, last_page: 9, total: 67, data: [{
+        id: 64, reader: 'Reader', book: 'Book', raw_status: 'active', status: 'Đang mượn · Đang giữ cọc',
+      }]};
     },
-    document: {
-      addEventListener(name, handler) {
-        if (!listeners.has(name)) listeners.set(name, []);
-        listeners.get(name).push(handler);
-      },
-      getElementById() { return null; },
-      querySelector() { return null; },
-    },
+    authMapStaffRow: (key, row) => row,
+    document: {addEventListener() {}, getElementById() { return null; }},
     escapeHTML: value => String(value),
     render() {},
   });
+  vm.runInContext(source, context);
+  await vm.runInContext("opView('loans').q = '#64'; opSetFilter('loans','active'); opLoad('loans', 8)", context);
+  assert.deepEqual(requests, ['/staff/loans?page=8&per_page=8&q=%2364&status=active&summary=1']);
+  const result = vm.runInContext("opRows('loans')", context);
+  assert.equal(result.count, 67);
+  assert.match(result.pagination, /8 \/ 9/);
+  assert.match(result.table, /data-op-return="64"/);
+  assert.match(result.table, /\/receipts\/loans\/64/);
+});
 
-  vm.runInContext(operationsSource, context);
-  const click = listeners.get('click')[0];
-  const event = selector => ({
-    target: {
-      closest(value) {
-        return value === selector ? {dataset: {opPage: '2', opApprove: '1'}} : null;
-      },
-    },
+test('author access and customer access are restricted before requesting staff data', async () => {
+  const calls = [];
+  const context = vm.createContext({
+    window: {libraryUser: {id: 1, role: 'Thủ thư'}}, labels: {}, state: {},
+    authRequest: async path => calls.push(path),
+    document: {addEventListener() {}}, render() {},
   });
-
-  click(event('[data-op-page]'));
-  assert.equal(vm.runInContext('opPage', context), 2);
-
-  click(event('[data-op-approve]'));
-  assert.equal(vm.runInContext('opData.reservations[0].status', context), 'Chờ duyệt');
+  vm.runInContext(source, context);
+  await vm.runInContext("opLoad('authors')", context);
+  context.window.libraryUser = {id: 2, role: 'Độc giả'};
+  await vm.runInContext("opLoad('loans')", context);
+  assert.deepEqual(calls, []);
 });

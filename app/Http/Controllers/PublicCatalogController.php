@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Models\Book;
 use App\Services\BookAvailability;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -35,8 +34,9 @@ class PublicCatalogController extends Controller
                     ? $query->whereNull('category')
                     : $query->where('category', $category);
             })
-            ->when(in_array($request->query('sort'), ['title_asc', 'title_desc', 'rental_asc', 'rental_desc'], true), function ($query) use ($request): void {
+            ->when(in_array($request->query('sort'), ['title_asc', 'title_desc', 'rental_asc', 'rental_desc', 'updated_desc'], true), function ($query) use ($request): void {
                 match ($request->query('sort')) {
+                    'updated_desc' => $query->orderByDesc('books.updated_at')->orderByDesc('books.id'),
                     'title_desc' => $query->orderByDesc('title'),
                     'rental_asc' => $query->orderBy('rental_fee')->orderBy('title'),
                     'rental_desc' => $query->orderByDesc('rental_fee')->orderBy('title'),
@@ -70,17 +70,16 @@ class PublicCatalogController extends Controller
 
     public function show(Book $book): JsonResponse
     {
-        $onLoan = (int) DB::table('loan_items')
-            ->join('loans', 'loans.id', '=', 'loan_items.loan_id')
-            ->where('loan_items.book_id', $book->id)
-            ->where('loans.status', 'active')
-            ->sum(DB::raw('loan_items.quantity - loan_items.returned_quantity - loan_items.lost_quantity'));
-        $reserved = (int) DB::table('reservations')
-            ->where('book_id', $book->id)
-            ->where('status', 'ready')
-            ->where('expires_at', '>', now())
-            ->sum('quantity');
-        $book->setAttribute('available_quantity', max(0, $book->total_quantity - $onLoan - $reserved));
+        $availability = app(BookAvailability::class);
+        $stock = Book::query()->whereKey($book->id)
+            ->select('books.id')
+            ->selectSub($availability->onLoan(), 'on_loan_quantity')
+            ->selectSub($availability->reserved(), 'reserved_quantity')
+            ->firstOrFail();
+        $book->setAttribute('available_quantity', max(
+            0,
+            $book->total_quantity - (int) $stock->on_loan_quantity - (int) $stock->reserved_quantity,
+        ));
         $book->setAttribute('preview_page_count', count($book->preview_pages ?? []));
         unset($book->preview_pages);
 

@@ -27,7 +27,8 @@ class ReaderController extends Controller
                             ->orWhere('phone', 'like', "%{$search}%"));
                 });
             })
-            ->orderBy('name')
+            ->when($request->filled('status'), fn ($query) => $query->where('is_locked', $request->string('status')->toString() === 'locked'))
+            ->orderBy('name')->orderBy('id')
             ->paginate(max(1, min($request->integer('per_page', 10), 50)))
             ->withQueryString();
 

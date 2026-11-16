@@ -17,9 +17,8 @@ Open Laragon Terminal. Check `php -v` and `mysql --version` before setup.
 ## Installation
 
 ```powershell
-git clone https://github.com/nguyenducchinh0209/thu-vien-may.git
+git clone --branch tamBranch https://github.com/nguyenducchinh0209/thu-vien-may.git
 cd thu-vien-may
-git switch main-v2
 composer install
 if (!(Test-Path .env)) {
     Copy-Item .env.example .env
@@ -50,11 +49,31 @@ An empty password is only an example for a local installation. Use your actual c
 ```powershell
 php artisan config:clear
 php artisan migrate --seed
+php artisan db:seed --class=RealBookCatalogSeeder
+php artisan db:seed --class=ClassicEpubCatalogSeeder
+php artisan storage:link
 php artisan serve --host=127.0.0.1 --port=8000
 ```
 
 Open http://127.0.0.1:8000. The current frontend serves CSS/JavaScript from public/library; npm is not needed for that frontend.
 For a Laragon virtual host, set the document root to this project's public directory.
+
+## Bản chạy cục bộ hiện tại
+
+- Mở ứng dụng tại http://127.0.0.1:8012. Với cấu hình Laragon của bản này, MySQL dùng cổng 3307 và database là `thu_vien_may_branch`.
+- Để cập nhật bản đang dùng, chạy `php artisan migrate` trong thư mục đồ án. Dùng `php artisan storage:link` nếu chưa có liên kết ảnh công khai.
+- Trên Windows, có thể mở chay-laravel.bat để chạy cổng 8012 với extension ZIP cho EPUB. Chạy `php artisan schedule:work` ở cửa sổ riêng khi muốn tự động cập nhật đặt sách hết hạn lúc chạy local.
+- Vào **Tổng quan** hoặc **Báo cáo** bằng tài khoản nhân viên. Báo cáo theo kỳ dùng ngày lịch Việt Nam. Các dòng khấu trừ từ cọc thể hiện chuyển nội bộ, hoàn cọc và hoàn phí là tiền chi. Mục chờ hoàn phí dành cho khoản đã thu, hết hạn giữ và chưa giao. Chỉ Admin được lưu biên nhận hoàn phí.
+- Mục **Phiếu mượn** có lịch sử xử lý và nút in. Phiếu phát hành sau migration lưu lại tên sách, mã sách, giá và tên người lập tại thời điểm phát. Phiếu cũ dùng dữ liệu liên kết sẵn có.
+- Độc giả xem phiếu của mình trong **Kệ sách**, còn sách yêu thích đồng bộ theo tài khoản.
+
+## Tài liệu vận hành và demo
+
+- Xem [hướng dẫn Docker, HTTPS và sao lưu](docs/DOCKER.md) để tạo bản portfolio trên môi trường riêng.
+- Xem [kịch bản demo 10–15 phút](docs/DEMO.md) cho ba vai trò. Tạo EPUB gốc kèm đồ án bằng `php artisan db:seed --class=DemoEpubSeeder` khi PHP đã bật ZIP.
+- Danh mục kèm 10 đầu sách giấy có ảnh bìa và ảnh giới thiệu, cùng ba đầu sách có bản EPUB. Xem [nguồn tài nguyên và cách bổ sung EPUB](docs/CATALOG.md).
+- Tồn khả dụng là số bản lưu hành trừ số đang mượn và số được giữ sau khi duyệt mà vẫn còn hạn. Yêu cầu chờ duyệt nằm trong hàng chờ và được xét theo thứ tự nhận.
+- Danh sách nhân viên tìm kiếm và phân trang qua API. Có thể tìm số phiếu bằng mã như #123, xem chi tiết và lập phạt trực tiếp từ phiếu.
 
 ## Demo accounts
 

@@ -6,9 +6,9 @@ use App\Http\Requests\StoreReservationRequest;
 use App\Http\Requests\LoanDueDateRequest;
 use App\Models\Book;
 use App\Models\Loan;
-use App\Models\LoanItem;
 use App\Models\Payment;
 use App\Models\Reservation;
+use App\Services\BookAvailability;
 use App\Services\LibraryNotifier;
 use App\Services\LoanIssuanceService;
 use Illuminate\Database\Eloquent\Builder;
@@ -105,10 +105,10 @@ class ReservationController extends Controller
         });
 
         $bookTitle = $reservation->book()->value('title') ?? 'một đầu sách';
-        $notifier->staff(
+        $notifier->librarians(
             'Có yêu cầu đặt sách mới',
             "Độc giả {$request->user()->name} vừa gửi yêu cầu đặt “{$bookTitle}”.",
-            $request->user(),
+            'reservations',
         );
 
         return response()->json([
@@ -132,10 +132,10 @@ class ReservationController extends Controller
         });
 
         $bookTitle = $reservation->book()->value('title') ?? 'một đầu sách';
-        $notifier->staff(
+        $notifier->librarians(
             'Độc giả đã hủy yêu cầu đặt sách',
             "Độc giả {$request->user()->name} đã hủy yêu cầu “{$bookTitle}”.",
-            $request->user(),
+            'reservations',
         );
 
         return response()->json(['message' => 'Đã hủy yêu cầu đặt trước.']);
@@ -152,6 +152,18 @@ class ReservationController extends Controller
             ->with(['reader:id,name,email', 'book:id,title,book_code', 'approver:id,name'])
             ->when($request->filled('status'), fn (Builder $query) => $query->where('status', $request->string('status')->toString()))
             ->when($request->filled('book_id'), fn (Builder $query) => $query->where('book_id', $request->integer('book_id')))
+            ->when($request->filled('q'), function (Builder $query) use ($request): void {
+                $search = $request->string('q')->trim()->toString();
+                $like = '%'.$search.'%';
+                $query->where(function (Builder $row) use ($search, $like): void {
+                    $id = ltrim($search, '#');
+                    if (ctype_digit($id)) {
+                        $row->orWhere('reservations.id', $id);
+                    }
+                    $row->orWhereHas('book', fn (Builder $book) => $book->where('title', 'like', $like)->orWhere('book_code', 'like', $like))
+                        ->orWhereHas('reader', fn (Builder $reader) => $reader->where('name', 'like', $like)->orWhere('email', 'like', $like));
+                });
+            })
             ->orderByRaw("CASE WHEN status = 'pending' THEN 0 ELSE 1 END")
             ->orderBy('created_at')
             ->orderBy('id')
@@ -174,7 +186,7 @@ class ReservationController extends Controller
     private function approveReservation(Request $request, Reservation $reservation, bool $paymentWorkflow, LibraryNotifier $notifier): JsonResponse
     {
         DB::transaction(function () use ($request, $reservation, $paymentWorkflow): void {
-            Book::query()->whereKey($reservation->book_id)->lockForUpdate()->firstOrFail();
+            $book = Book::query()->whereKey($reservation->book_id)->lockForUpdate()->firstOrFail();
             $reservation = Reservation::query()->whereKey($reservation->id)->lockForUpdate()->firstOrFail();
 
             if ($reservation->status !== 'pending') {
@@ -196,17 +208,7 @@ class ReservationController extends Controller
                 throw ValidationException::withMessages(['reservation' => 'Cần xử lý yêu cầu đặt trước cũ hơn trước.']);
             }
 
-            $book = Book::query()->findOrFail($reservation->book_id);
-            $onLoan = (int) LoanItem::query()
-                ->where('book_id', $book->id)
-                ->whereHas('loan', fn (Builder $query) => $query->where('status', 'active'))
-                ->sum(DB::raw('quantity - returned_quantity - lost_quantity'));
-            $reserved = (int) Reservation::query()
-                ->where('book_id', $book->id)
-                ->where('status', 'ready')
-                ->where('expires_at', '>', now())
-                ->sum('quantity');
-            $available = $book->total_quantity - $onLoan - $reserved;
+            $available = app(BookAvailability::class)->available($book);
 
             if ($reservation->quantity > $available) {
                 throw ValidationException::withMessages([
@@ -230,7 +232,7 @@ class ReservationController extends Controller
                 ];
             }
             $reservation->update($values);
-        });
+        }, 3);
 
         $updatedReservation = $reservation->fresh()->load(['reader:id,name', 'book:id,title']);
         $notifier->reader(

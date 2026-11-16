@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\LibraryCalendar;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -13,6 +14,7 @@ class Loan extends Model
 
     protected $fillable = [
         'reader_id', 'issued_by', 'issued_at', 'due_at', 'returned_at', 'status',
+        'reader_name_snapshot', 'issuer_name_snapshot',
         'reservation_id', 'payment_id',
         'rental_fee_total', 'rental_fee_received', 'rental_fee_received_at',
         'rental_fee_received_by', 'rental_fee_payment_method', 'rental_fee_receipt_note',
@@ -70,6 +72,6 @@ class Loan extends Model
             return 0;
         }
 
-        return max(1, (int) $this->due_at->copy()->startOfDay()->diffInDays(now()->startOfDay()));
+        return LibraryCalendar::daysOverdue($this->due_at, now());
     }
 }

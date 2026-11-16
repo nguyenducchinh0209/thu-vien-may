@@ -69,7 +69,7 @@
       return 'Chưa có thông tin';
     },
     paymentStatus(value) {
-      return ['pending','confirming','paid','failed','cancelled','expired'].includes(value) ? value : 'unknown';
+      return ['pending','confirming','paid','failed','cancelled','expired','refunded'].includes(value) ? value : 'unknown';
     },
   });
   root.createLibraryFeatureApi = createLibraryFeatureApi;

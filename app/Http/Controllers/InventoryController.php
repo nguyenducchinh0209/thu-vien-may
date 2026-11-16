@@ -18,10 +18,14 @@ class InventoryController extends Controller
             ->whereColumn('reservations.book_id', 'books.id')
             ->where('status', 'pending');
 
+        $onLoan = $availability->onLoan();
+        $held = $availability->reserved();
+        $status = $request->string('status')->toString();
+        $comparison = $status === 'available' ? '>' : '<=';
         $books = Book::query()
             ->select('books.*')
-            ->selectSub($availability->onLoan(), 'on_loan_quantity')
-            ->selectSub($availability->reserved(), 'reserved_quantity')
+            ->selectSub($onLoan, 'on_loan_quantity')
+            ->selectSub($held, 'reserved_quantity')
             ->selectSub($waiting, 'waiting_quantity')
             ->with('authors:id,name')
             ->when($request->filled('q'), function ($query) use ($request): void {
@@ -32,7 +36,10 @@ class InventoryController extends Controller
                         ->orWhere('isbn', 'like', "%{$search}%");
                 });
             })
-            ->orderBy('title')
+            ->when(in_array($status, ['available', 'unavailable'], true), fn ($query) => $query
+                ->whereRaw('books.total_quantity '.$comparison.' ('.$onLoan->toSql().') + ('.$held->toSql().')',
+                    [...$onLoan->getBindings(), ...$held->getBindings()]))
+            ->orderBy('title')->orderBy('id')
             ->paginate(max(1, min($request->integer('per_page', 10), 50)))
             ->withQueryString();
 

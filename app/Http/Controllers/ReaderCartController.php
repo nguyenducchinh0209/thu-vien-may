@@ -165,10 +165,10 @@ class ReaderCartController extends Controller
 
         $bookTitles = $reservations->pluck('book.title')->filter()->take(3)->implode('”, “');
         $moreBooks = $reservations->count() > 3 ? ' và '.($reservations->count() - 3).' đầu sách khác' : '';
-        $notifier->staff(
+        $notifier->librarians(
             'Có yêu cầu đặt sách mới',
             "Độc giả {$request->user()->name} gửi {$reservations->count()} yêu cầu: “{$bookTitles}”{$moreBooks}.",
-            $request->user(),
+            'reservations',
         );
 
         return response()->json([

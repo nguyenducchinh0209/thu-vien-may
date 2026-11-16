@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.*
+vendor
+node_modules
+public/storage
+storage
+bootstrap/cache/*.php
+database/*.sqlite*
+tests
+.phpunit*
+**/*.log
+**/*.sql
+**/*.sql.gz
+**/*.key
+**/*.pem

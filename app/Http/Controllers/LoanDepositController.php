@@ -6,7 +6,9 @@ use App\Models\Fine;
 use App\Models\Loan;
 use App\Models\LoanDepositSettlement;
 use App\Models\Payment;
+use App\Services\LibraryMoney;
 use App\Services\LibraryNotifier;
+use App\Services\LoanDepositBalance;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -16,9 +18,20 @@ class LoanDepositController extends Controller
 {
     public function preview(Loan $loan): JsonResponse
     {
-        $loan->loadMissing(['deposit.settlement', 'items']);
+        $summary = LoanDepositBalance::summary($loan);
         abort_unless($loan->deposit, 404, 'Phiếu mượn cũ không có tiền cọc.');
-        return response()->json($this->summary($loan));
+
+        return response()->json([
+            ...$summary,
+            'loan_id' => $loan->id,
+            'ready_to_settle' => $summary['can_settle'],
+            'money_status' => $summary['status'],
+            'deposit_balance' => $summary['balance'],
+            'loss_protection_amount' => $loan->deposit->loss_protection_amount,
+            'book_holding_amount' => $loan->deposit->book_holding_amount,
+            'unpaid_fines' => $loan->fines->where('status', 'unpaid')->values()
+                ->map(fn (Fine $fine) => $fine->only(['id', 'fine_code', 'reason', 'amount'])),
+        ]);
     }
 
     public function settle(Request $request, Loan $loan, LibraryNotifier $notifier): JsonResponse
@@ -36,7 +49,15 @@ class LoanDepositController extends Controller
             $deposit = $loan->deposit()->lockForUpdate()->first();
             if (! $deposit) throw ValidationException::withMessages(['deposit' => 'Phiếu mượn này không có cọc để tất toán.']);
             $existing = LoanDepositSettlement::where('loan_deposit_id', $deposit->id)->first();
-            if ($existing) return [$existing->id, false];
+            if ($existing) {
+                $this->assertExpectedAmounts($data, [
+                    'expected_deposit_deduction' => LibraryMoney::minor($existing->deposit_used),
+                    'expected_refund' => LibraryMoney::minor($existing->refund_amount),
+                    'expected_additional_due' => LibraryMoney::minor($existing->additional_received),
+                ]);
+
+                return [$existing->id, false];
+            }
             if ($loan->items()->whereRaw('(returned_quantity + lost_quantity) < quantity')->exists()) {
                 throw ValidationException::withMessages(['loan' => 'Chỉ tất toán sau khi đã nhận trả hoặc xác nhận mất toàn bộ số bản.']);
             }
@@ -44,44 +65,39 @@ class LoanDepositController extends Controller
             if ($fines->isNotEmpty() && Payment::whereIn('fine_id', $fines->pluck('id'))->whereIn('status', ['pending', 'confirming'])->exists()) {
                 throw ValidationException::withMessages(['payments' => 'Khoản phạt đang có giao dịch chờ xử lý; hãy xác nhận hoặc hủy giao dịch trước.']);
             }
-            $fineCents = $fines->sum(fn (Fine $fine) => (int) round((float) $fine->amount * 100));
-            $depositCents = (int) round((float) $deposit->amount * 100);
-            $usedCents = min($depositCents, $fineCents);
-            $refundCents = max(0, $depositCents - $fineCents);
-            $additionalCents = max(0, $fineCents - $depositCents);
-            foreach ([
+            $amounts = LoanDepositBalance::amounts($deposit->amount, $fines);
+            $usedCents = $amounts['deduction'];
+            $refundCents = $amounts['refund'];
+            $additionalCents = $amounts['additional'];
+            $this->assertExpectedAmounts($data, [
                 'expected_deposit_deduction' => $usedCents,
                 'expected_refund' => $refundCents,
                 'expected_additional_due' => $additionalCents,
-            ] as $field => $actualCents) {
-                if (isset($data[$field]) && (int) round((float) $data[$field] * 100) !== $actualCents) {
-                    abort(409, 'Số liệu cọc hoặc tiền phạt đã thay đổi. Hãy tải lại đối soát.');
-                }
-            }
+            ]);
             if ($refundCents > 0 && empty($data['refund_method'])) throw ValidationException::withMessages(['refund_method' => 'Chọn phương thức hoàn tiền cọc.']);
             if ($additionalCents > 0 && empty($data['additional_method'])) throw ValidationException::withMessages(['additional_method' => 'Chọn phương thức thu thêm tiền phạt.']);
             $settlement = LoanDepositSettlement::create([
                 'loan_deposit_id' => $deposit->id,
-                'deposit_used' => number_format($usedCents / 100, 2, '.', ''),
-                'refund_amount' => number_format($refundCents / 100, 2, '.', ''),
+                'deposit_used' => LibraryMoney::decimal($usedCents),
+                'refund_amount' => LibraryMoney::decimal($refundCents),
                 'refund_method' => $refundCents ? $data['refund_method'] : null,
-                'additional_received' => number_format($additionalCents / 100, 2, '.', ''),
+                'additional_received' => LibraryMoney::decimal($additionalCents),
                 'additional_method' => $additionalCents ? $data['additional_method'] : null,
                 'receipt_note' => $data['receipt_note'] ?? null, 'settled_by' => $request->user()->id, 'settled_at' => now(),
             ]);
             $leftDeposit = $usedCents;
             foreach ($fines as $fine) {
-                $fineCentsForRow = (int) round((float) $fine->amount * 100);
+                $fineCentsForRow = LibraryMoney::minor($fine->amount);
                 $fromDeposit = min($leftDeposit, $fineCentsForRow);
                 $leftDeposit -= $fromDeposit;
                 $fromAdditional = $fineCentsForRow - $fromDeposit;
                 $settlement->allocations()->create([
                     'fine_id' => $fine->id,
-                    'deposit_amount' => number_format($fromDeposit / 100, 2, '.', ''),
-                    'additional_amount' => number_format($fromAdditional / 100, 2, '.', ''),
+                    'deposit_amount' => LibraryMoney::decimal($fromDeposit),
+                    'additional_amount' => LibraryMoney::decimal($fromAdditional),
                 ]);
                 $fine->payments()->create([
-                    'received_by' => $request->user()->id, 'amount' => number_format($fineCentsForRow / 100, 2, '.', ''),
+                    'received_by' => $request->user()->id, 'amount' => LibraryMoney::decimal($fineCentsForRow),
                     'method' => $fromAdditional > 0 ? $data['additional_method'] : 'manual',
                     'receipt_note' => 'Đối soát cọc phiếu mượn #'.$loan->id.(($data['receipt_note'] ?? null) ? ': '.$data['receipt_note'] : ''), 'paid_at' => now(),
                 ]);
@@ -94,25 +110,12 @@ class LoanDepositController extends Controller
         return response()->json(['message' => $created ? 'Đã tất toán cọc.' : 'Đối soát cọc đã được hoàn tất trước đó.', 'settlement' => $settlement]);
     }
 
-    private function summary(Loan $loan): array
+    private function assertExpectedAmounts(array $data, array $actual): void
     {
-        $complete = ! $loan->items()->whereRaw('(returned_quantity + lost_quantity) < quantity')->exists();
-        $fines = Fine::where('loan_id', $loan->id)->where('status', 'unpaid')->get();
-        $pending = Payment::whereIn('fine_id', $fines->pluck('id'))->whereIn('status', ['pending', 'confirming'])->exists();
-        $depositCents = (int) round((float) $loan->deposit->amount * 100);
-        $fineCents = $fines->sum(fn (Fine $fine) => (int) round((float) $fine->amount * 100));
-        return [
-            'loan_id' => $loan->id, 'ready_to_settle' => $complete && ! $pending,
-            'money_status' => $loan->deposit->settlement ? 'settled' : ($fineCents > $depositCents ? 'payment_due' : ($complete ? ($fineCents === $depositCents ? 'ready_to_settle' : 'refund_due') : 'deposit_held')),
-            'deposit_balance' => number_format(($depositCents - $fineCents) / 100, 2, '.', ''),
-            'loss_protection_amount' => $loan->deposit->loss_protection_amount,
-            'book_holding_amount' => $loan->deposit->book_holding_amount,
-            'all_copies_accounted_for' => $complete, 'pending_fine_payment' => $pending,
-            'deposit' => $loan->deposit->amount, 'unpaid_fines' => $fines,
-            'deposit_deduction' => number_format(min($depositCents, $fineCents) / 100, 2, '.', ''),
-            'refund' => number_format(max(0, $depositCents - $fineCents) / 100, 2, '.', ''),
-            'additional_due' => number_format(max(0, $fineCents - $depositCents) / 100, 2, '.', ''),
-            'settlement' => $loan->deposit->settlement,
-        ];
+        foreach ($actual as $field => $amount) {
+            if (isset($data[$field]) && LibraryMoney::minor((string) $data[$field]) !== $amount) {
+                abort(409, 'Số liệu cọc hoặc tiền phạt đã thay đổi. Hãy tải lại đối soát.');
+            }
+        }
     }
 }

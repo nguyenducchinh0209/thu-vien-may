@@ -8,12 +8,12 @@ use App\Models\Membership;
 use App\Models\Book;
 use App\Models\Fine;
 use App\Models\Loan;
-use App\Models\LoanItem;
 use App\Models\Payment;
 use App\Models\PaymentEvent;
 use App\Models\PaymentQuote;
 use App\Models\Reservation;
 use App\Models\User;
+use App\Services\BookAvailability;
 use App\Services\LibraryNotifier;
 use App\Services\LoanIssuanceService;
 use Illuminate\Database\Eloquent\Builder;
@@ -32,12 +32,13 @@ class PaymentController extends Controller
             'reference_id' => ['required', 'string', 'max:40'],
         ]);
 
-        [$quote, $payment] = DB::transaction(function () use ($request, $data): array {
+        $bookId = $data['purpose'] === 'reservation'
+            ? Reservation::query()->where('reader_id', $request->user()->id)
+                ->whereKey($data['reference_id'])->value('book_id')
+            : null;
+
+        [$quote, $payment] = DB::transaction(function () use ($request, $data, $bookId): array {
             if ($data['purpose'] === 'reservation') {
-                $bookId = Reservation::query()
-                    ->where('reader_id', $request->user()->id)
-                    ->whereKey($data['reference_id'])
-                    ->value('book_id');
                 abort_if($bookId === null, 404);
                 $book = Book::query()->whereKey($bookId)->lockForUpdate()->first();
                 abort_if(! $book, 409, 'Sách của yêu cầu không còn trong danh mục hoạt động.');
@@ -72,17 +73,7 @@ class PaymentController extends Controller
                         abort(409, 'Yêu cầu đặt trước đã có phiếu mượn, không thể tạo báo giá mới.');
                     }
 
-                    $onLoan = (int) LoanItem::query()
-                        ->where('book_id', $book->id)
-                        ->whereHas('loan', fn (Builder $query) => $query->where('status', 'active'))
-                        ->sum(DB::raw('quantity - returned_quantity - lost_quantity'));
-                    $otherReserved = (int) Reservation::query()
-                        ->where('book_id', $book->id)
-                        ->where('id', '!=', $reservation->id)
-                        ->where('status', 'ready')
-                        ->where('expires_at', '>', now())
-                        ->sum('quantity');
-                    $available = $book->total_quantity - $onLoan - $otherReserved;
+                    $available = app(BookAvailability::class)->available($book, $reservation->id);
                     if ((int) $reservation->quantity > $available) {
                         abort(409, "Chỉ còn {$available} bản có thể giữ cho yêu cầu này.");
                     }
@@ -370,10 +361,10 @@ class PaymentController extends Controller
                 'fine' => 'thanh toán khoản phạt',
                 default => 'thanh toán',
             };
-            $notifier->staff(
+            $notifier->librarians(
                 'Có yêu cầu thanh toán mới',
                 "Độc giả {$request->user()->name} gửi yêu cầu {$purpose} {$payment->amount} {$payment->currency}.",
-                $request->user(),
+                'payments',
             );
         }
 
@@ -437,10 +428,10 @@ class PaymentController extends Controller
 
         if (! $alreadyReported) {
             $purpose = $payment->purpose === 'reservation' ? 'đặt sách' : ($payment->purpose === 'fine' ? 'khoản phạt' : 'thành viên VIP');
-            $notifier->staff(
+            $notifier->librarians(
                 'Độc giả đã báo chuyển khoản',
                 "{$request->user()->name} vừa báo chuyển khoản {$payment->amount} {$payment->currency} cho {$purpose}.",
-                $request->user(),
+                'payments',
             );
         }
 
@@ -463,11 +454,24 @@ class PaymentController extends Controller
     public function staffIndex(Request $request): JsonResponse
     {
         $this->expirePendingPayments();
+        $status = $request->string('status', 'queue')->toString();
         $payments = Payment::query()
             ->with(['reader' => fn ($query) => $query->withTrashed()->select('id', 'name', 'email'), 'quote'])
-            ->whereIn('status', ['pending', 'confirming'])
-            ->when($request->filled('status'), fn (Builder $query) => $query->where('status', $request->string('status')->toString()))
-            ->latest('created_at')
+            ->when($status === 'queue', fn (Builder $query) => $query->whereIn('status', ['pending', 'confirming']))
+            ->when(! in_array($status, ['queue', 'all'], true), fn (Builder $query) => $query->where('status', $status))
+            ->when($request->filled('q'), function (Builder $query) use ($request): void {
+                $search = $request->string('q')->trim()->toString();
+                $like = '%'.$search.'%';
+                $query->where(function (Builder $row) use ($search, $like): void {
+                    $id = ltrim($search, '#');
+                    if (ctype_digit($id)) {
+                        $row->orWhere('reservation_id', $id)->orWhere('fine_id', $id);
+                    }
+                    $row->orWhere('payments.id', 'like', $like)
+                        ->orWhereHas('reader', fn (Builder $reader) => $reader->where('name', 'like', $like)->orWhere('email', 'like', $like));
+                });
+            })
+            ->latest('created_at')->orderByDesc('id')
             ->paginate(max(1, min($request->integer('per_page', 20), 50)))
             ->through(fn (Payment $payment) => [
                 ...$this->paymentPayload($payment),
@@ -616,12 +620,14 @@ class PaymentController extends Controller
         $payment = Payment::query()->where('reservation_id', $reservation->id)->firstOrFail();
         $loan = $loans->issuePaidReservation($request->user(), $reservation->id, $payment, $request->validated('due_at'), $request->validated('deposit_payment'));
         $reservation = $reservation->fresh()->load(['reader', 'book']);
-        $notifier->reader(
-            $reservation->reader,
-            'Sách đã được bàn giao',
-            "Thủ thư {$request->user()->name} đã ghi nhận bàn giao sách “{$reservation->book?->title}”.",
-            'shelf',
-        );
+        if ($loan->wasRecentlyCreated) {
+            $notifier->reader(
+                $reservation->reader,
+                'Sách đã được bàn giao',
+                "Thủ thư {$request->user()->name} đã ghi nhận bàn giao sách “{$reservation->book?->title}”.",
+                'shelf',
+            );
+        }
 
         return response()->json([
             'message' => 'Đã xác nhận giao sách.',
@@ -740,7 +746,7 @@ class PaymentController extends Controller
     {
         DB::transaction(function () use ($payment): void {
             $locked = Payment::query()->whereKey($payment->id)->lockForUpdate()->firstOrFail();
-            if (in_array($locked->status, ['paid', 'expired'], true)) {
+            if (! in_array($locked->status, ['pending', 'confirming'], true)) {
                 return;
             }
             $quote = PaymentQuote::query()->whereKey($locked->quote_id)->firstOrFail();
@@ -750,7 +756,7 @@ class PaymentController extends Controller
                 $this->transition($locked, 'expired', $reservationExpired ? 'reservation_expired' : 'quote_expired', null, null);
                 if ($locked->reservation_id) {
                     Reservation::query()->whereKey($locked->reservation_id)
-                        ->where('payment_status', '!=', 'paid')
+                        ->whereIn('payment_status', ['pending', 'confirming'])
                         ->update(['payment_status' => 'expired']);
                 }
             }
@@ -759,7 +765,11 @@ class PaymentController extends Controller
 
     private function expirePendingPayments(): void
     {
-        Payment::query()->whereIn('status', ['pending', 'confirming'])->orderBy('created_at')
+        $now = now();
+        Payment::query()->whereIn('status', ['pending', 'confirming'])
+            ->where(fn (Builder $query) => $query->whereHas('quote', fn (Builder $quote) => $quote->where('expires_at', '<=', $now))
+                ->orWhereHas('reservation', fn (Builder $reservation) => $reservation
+                    ->where(fn (Builder $date) => $date->whereNull('expires_at')->orWhere('expires_at', '<=', $now))))
             ->chunkById(100, function ($payments): void {
                 foreach ($payments as $payment) {
                     $this->expireIfNeeded($payment);

@@ -15,7 +15,7 @@ class AuthorController extends Controller
         $authors = Author::query()
             ->withCount('books')
             ->when($request->filled('q'), fn ($query) => $query->where('name', 'like', '%'.$request->string('q')->trim().'%'))
-            ->orderBy('name')
+            ->orderBy('name')->orderBy('id')
             ->paginate(max(1, min($request->integer('per_page', 10), 50)))
             ->withQueryString();
 

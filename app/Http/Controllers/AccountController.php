@@ -14,13 +14,18 @@ class AccountController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
+        $role = $request->string('role')->toString();
+        $status = $request->string('status')->toString();
         $accounts = User::query()
             ->with('readerProfile')
             ->when($request->filled('q'), fn ($query) => $query->where(function ($query) use ($request): void {
                 $query->where('name', 'like', '%'.$request->string('q')->trim().'%')
                     ->orWhere('email', 'like', '%'.$request->string('q')->trim().'%');
             }))
-            ->orderBy('name')
+            ->when($role === 'staff', fn ($query) => $query->whereIn('role', ['Admin', 'Thủ thư']))
+            ->when($role !== '' && $role !== 'staff', fn ($query) => $query->where('role', $role))
+            ->when(in_array($status, ['active', 'locked'], true), fn ($query) => $query->where('is_locked', $status === 'locked'))
+            ->orderBy('name')->orderBy('id')
             ->paginate(max(1, min($request->integer('per_page', 20), 50)));
 
         return response()->json($accounts);

@@ -158,12 +158,12 @@ class ReservationPaymentWorkflowTest extends TestCase
         ])->assertUnprocessable()->assertJsonValidationErrors('reservation_id');
 
         $dueAt = now()->addDays(30)->startOfMinute()->toISOString();
-        $loanId = $this->postJson("/staff/reservations/{$reservationId}/handover", ['due_at' => $dueAt, 'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash']])
+        $loanId = $this->postJson("/staff/reservations/{$reservationId}/handover", ['due_at' => $dueAt, 'deposit_payment' => ['amount' => '200000.00', 'method' => 'cash']])
             ->assertOk()
             ->assertJsonPath('loan.due_at', $dueAt)
             ->assertJsonPath('loan.reservation_id', $reservationId)
             ->json('loan.id');
-        $this->postJson("/staff/reservations/{$reservationId}/handover", ['due_at' => now()->addDays(7)->toISOString(), 'deposit_payment' => ['amount' => '100000.00', 'method' => 'cash']])
+        $this->postJson("/staff/reservations/{$reservationId}/handover", ['due_at' => now()->addDays(7)->toISOString(), 'deposit_payment' => ['amount' => '200000.00', 'method' => 'cash']])
             ->assertOk()
             ->assertJsonPath('loan.due_at', $dueAt)
             ->assertJsonPath('loan.id', $loanId);

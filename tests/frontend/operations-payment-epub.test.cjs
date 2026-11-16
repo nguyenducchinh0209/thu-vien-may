@@ -27,6 +27,7 @@ function renderOperationRows(key, rows, role = 'Thủ thư', paymentsEnabled = t
   });
   vm.runInContext(operationsSource, context);
   vm.runInContext(`opData[${JSON.stringify(key)}] = ${JSON.stringify(rows)};`, context);
+  vm.runInContext(`Object.assign(opView(${JSON.stringify(key)}), {loaded: true, total: ${rows.length}})`, context);
   return vm.runInContext(`opRows(${JSON.stringify(key)}).table`, context);
 }
 
@@ -62,23 +63,49 @@ test('approved unpaid reservations are not shown as collected or confirmable', (
   assert.match(renderOperationRows('reservations', [{id:41, reader:'Reader One', book:'Book One', status:'Chờ thu tiền mặt'}]), /data-op-confirm-payment="41"/);
 });
 
-test('reader reservation navigation remains personal while staff reservation routing stays protected', () => {
+test('reader reservations and fines are personal while staff operations stay protected', () => {
   const start = authAdminSource.indexOf('const authLibrarianPages=');
   const end = authAdminSource.indexOf('\nfunction authSetIdentity', start);
   assert.notEqual(start, -1);
   assert.notEqual(end, -1);
   const routeSource = authAdminSource.slice(start, end);
   const context = vm.createContext({authSession:{role:'Độc giả'}});
-  vm.runInContext(`${routeSource}; globalThis.isStaffPage=authIsLibrarianPage;`, context);
+  vm.runInContext(`${routeSource}; globalThis.isStaffPage=authIsLibrarianPage; globalThis.isAdminCounterPage=authAdminCounterPage;`, context);
   assert.equal(context.isStaffPage('reservations'), false);
+  assert.equal(context.isStaffPage('fines'), false);
   assert.equal(context.isStaffPage('loans'), true);
   context.authSession = {role:'Thủ thư'};
   assert.equal(context.isStaffPage('reservations'), true);
+  assert.equal(context.isStaffPage('fines'), true);
   assert.equal(context.isStaffPage('loans'), true);
+  assert.equal(context.isAdminCounterPage('loans'), false);
+  context.authSession = {role:'Admin'};
+  assert.equal(context.isStaffPage('fines'), true);
+  for (const page of ['librarian-home','reservations','payments','loans','returns','readers']) {
+    assert.equal(context.isAdminCounterPage(page), true);
+  }
+  for (const page of ['accounts','reports','fines','inventory']) {
+    assert.equal(context.isAdminCounterPage(page), false);
+  }
+  context.authSession = null;
+  assert.equal(context.isStaffPage('fines'), true);
 
   assert.match(sidebarSource, /id="reader-nav"[\s\S]*?href="#reservations"[^>]*data-page="reservations"/);
+  assert.match(sidebarSource, /id="reader-nav"[\s\S]*?href="#fines"[^>]*data-page="fines"/);
   assert.match(authAdminSource, /if\(authIsLibrarianPage\(route\)&&authSession\?\.role==='Độc giả'\)route='home';/);
   assert.match(authAdminSource, /if\(authIsLibrarianPage\(state\.page\)&&authSession\?\.role==='Độc giả'\)/);
+});
+
+test('fine rows offer waiver to Admin and collection to the librarian', () => {
+  const fine = {id:17, reader:'Reader One', reason:'Rách bìa', amount:25000, status:'Chưa thanh toán', raw_status:'unpaid'};
+  const admin = renderOperationRows('fines', [fine], 'Admin');
+  assert.match(admin, /data-op-waive="17"/);
+  assert.match(admin, /\/staff\/receipts\/fines\/17"[^>]*>Xem phiếu/);
+  assert.doesNotMatch(admin, /data-op-pay=/);
+  const librarian = renderOperationRows('fines', [fine]);
+  assert.match(librarian, /data-op-pay="17"/);
+  assert.doesNotMatch(librarian, /data-op-waive=/);
+  assert.doesNotMatch(renderOperationRows('fines', [{...fine,status:'Đã miễn',raw_status:'waived'}], 'Admin'), /data-op-waive=/);
 });
 
 test('reservation request uses the concise QR label and removes redundant cart fee notes', () => {
@@ -115,9 +142,14 @@ test('inventory exposes the protected upload form only for authenticated staff r
   assert.doesNotMatch(renderOperationRows('inventory', [{...inventory[0], book_id:null}], 'Admin'), /epub\/upload/);
 });
 
-test('payments navigation is staff-only in the sidebar and follows the enabled capability', () => {
-  assert.match(sidebarSource, /id="librarian-nav"[\s\S]*?data-page="payments" data-feature="payments"/);
-  assert.match(sidebarSource, /id="admin-nav"[\s\S]*?data-page="payments" data-feature="payments"/);
+test('counter navigation is in the librarian menu and the payment link follows the enabled capability', () => {
+  const librarianMenu = sidebarSource.slice(sidebarSource.indexOf('id="librarian-nav"'), sidebarSource.indexOf('id="admin-nav"'));
+  const adminMenu = sidebarSource.slice(sidebarSource.indexOf('id="admin-nav"'), sidebarSource.indexOf('class="sidebar-bottom"'));
+  assert.match(librarianMenu, /data-page="payments" data-feature="payments"/);
+  for (const page of ['reservations', 'payments', 'loans', 'returns']) {
+    assert.ok(librarianMenu.includes(`data-page="${page}"`));
+    assert.ok(!adminMenu.includes(`data-page="${page}"`));
+  }
   assert.doesNotMatch(sidebarSource.slice(sidebarSource.indexOf('id="reader-nav"'), sidebarSource.indexOf('id="librarian-nav"')), /data-page="payments"/);
 
   const start = appSource.indexOf('function syncSidebar(){');

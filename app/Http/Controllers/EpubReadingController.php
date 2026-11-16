@@ -6,6 +6,8 @@ use App\Models\Book;
 use App\Models\Membership;
 use App\Models\ReadingProgress;
 use DOMDocument;
+use DOMNode;
+use DOMText;
 use DOMXPath;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -94,7 +96,7 @@ class EpubReadingController extends Controller
         return redirect()->route('books.read', ['book' => $book, 'chapter' => 1]);
     }
 
-    /** @return array{chapters: array<int, array{title: string, text: string}>, previewAvailable: bool} */
+    /** @return array{chapters: list<array{title: string, paragraphs: list<string>}>, previewAvailable: bool} */
     private function readChapters(string $path): array
     {
         abort_unless(extension_loaded('zip') && class_exists(ZipArchive::class), 503, 'PHP zip extension is required to read EPUB files.');
@@ -167,12 +169,10 @@ class EpubReadingController extends Controller
                 foreach ($chapterXpath->query('//script|//style|//head') as $node) {
                     $node->parentNode?->removeChild($node);
                 }
-                $body = $chapterXpath->query('//body')->item(0);
-                $text = preg_replace('/[\t\r\n ]+/u', ' ', $body?->textContent ?? $document->textContent ?? '') ?? '';
-                $text = trim($text);
+                $body = $chapterXpath->query('//body')->item(0) ?? $document;
                 $chapters[] = [
                     'title' => $title !== '' ? $title : 'Chapter '.(count($chapters) + 1),
-                    'text' => $text,
+                    'paragraphs' => $this->chapterParagraphs($body),
                 ];
             }
 
@@ -185,6 +185,47 @@ class EpubReadingController extends Controller
             ];
         } finally {
             $archive->close();
+        }
+    }
+
+    /** @return list<string> */
+    private function chapterParagraphs(DOMNode $body): array
+    {
+        $text = '';
+        $this->appendChapterText($body, $text);
+        $text = preg_replace(['/ +/', '/ *\n */'], [' ', "\n"], $text) ?? $text;
+
+        return preg_split('/\n{2,}/', trim($text), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    }
+
+    private function appendChapterText(DOMNode $node, string &$text): void
+    {
+        if ($node instanceof DOMText) {
+            $text .= preg_replace('/[ \t\r\n\f]+/', ' ', $node->data) ?? $node->data;
+
+            return;
+        }
+
+        if ($node->nodeName === 'br') {
+            $text .= "\n";
+
+            return;
+        }
+
+        $block = in_array($node->nodeName, [
+            'article', 'aside', 'blockquote', 'dd', 'div', 'dt', 'figcaption', 'figure',
+            'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'li', 'p', 'pre', 'section', 'tr',
+        ], true);
+        if ($block) {
+            $text .= "\n\n";
+        }
+
+        foreach ($node->childNodes as $child) {
+            $this->appendChapterText($child, $text);
+        }
+
+        if ($block) {
+            $text .= "\n\n";
         }
     }
 

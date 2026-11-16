@@ -8,7 +8,9 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class LoanReturn extends Model
 {
-    protected $fillable = ['loan_id', 'returned_by', 'returned_at'];
+    protected $fillable = ['loan_id', 'returned_by', 'returned_at', 'return_key', 'return_fingerprint'];
+
+    protected $hidden = ['return_key', 'return_fingerprint'];
 
     protected function casts(): array
     {

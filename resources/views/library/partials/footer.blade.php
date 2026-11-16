@@ -1,1 +1,1 @@
-      <footer class="site-footer"><span>© {{ date('Y') }} Thư viện Mây</span><span>Đọc chậm thôi, thế giới vẫn chờ. <b>✳</b></span></footer>
+      <footer class="site-footer"><span>© {{ date('Y') }} Thư viện Mây</span><span class="site-footer-tagline">Đọc chậm thôi, thế giới vẫn chờ. <b>✳</b></span></footer>

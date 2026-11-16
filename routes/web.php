@@ -14,6 +14,10 @@ use App\Http\Controllers\LibraryPageController;
 use App\Http\Controllers\LoanController;
 use App\Http\Controllers\LoanDepositController;
 use App\Http\Controllers\MembershipController;
+use App\Http\Controllers\FavoriteBookController;
+use App\Http\Controllers\LibraryReceiptController;
+use App\Http\Controllers\PaymentRefundController;
+use App\Http\Controllers\StaffReportController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\PaymentController;
 use App\Http\Controllers\PublicCatalogController;
@@ -43,6 +47,7 @@ Route::get('/auth/session', fn () => response()->json([
     'user' => request()->user()?->only(['id', 'name', 'email', 'role']),
 ]))->middleware(['auth', 'active'])->name('auth.session');
 Route::middleware(['auth', 'active'])->group(function () {
+    Route::get('/receipts/loans/{loan}', [LibraryReceiptController::class, 'loan'])->name('receipts.loans.show');
     Route::get('/my/profile', [AuthController::class, 'profile'])->name('profile.show');
     Route::patch('/my/profile', [AuthController::class, 'updateProfile'])->name('profile.update');
     Route::get('/my/notifications', [NotificationController::class, 'index'])->name('notifications.index');
@@ -58,6 +63,12 @@ Route::middleware(['auth', 'active', 'role:Admin,Thủ thư'])
     ->prefix('staff')
     ->name('staff.')
     ->group(function () {
+        Route::get('dashboard', [StaffReportController::class, 'dashboard'])->name('dashboard');
+        Route::get('reports', [StaffReportController::class, 'index'])->name('reports.index');
+        Route::get('reports/export', [StaffReportController::class, 'export'])->name('reports.export');
+        Route::get('receipts/fines/{fine}', [LibraryReceiptController::class, 'fine'])->name('receipts.fines.show');
+        Route::get('receipts/payments/{payment}', [LibraryReceiptController::class, 'payment'])->name('receipts.payments.show');
+        Route::post('payments/{payment}/refund', [PaymentRefundController::class, 'store'])->middleware('role:Admin')->name('payments.refund');
         Route::apiResource('books', BookController::class);
         Route::post('books/{book}/preview', [BookPreviewController::class, 'store'])->name('books.preview.store');
         Route::delete('books/{book}/preview', [BookPreviewController::class, 'destroy'])->name('books.preview.destroy');
@@ -65,6 +76,7 @@ Route::middleware(['auth', 'active', 'role:Admin,Thủ thư'])
         Route::apiResource('readers', ReaderController::class);
         Route::apiResource('accounts', AccountController::class)->only(['index', 'store', 'update'])->middleware('role:Admin');
         Route::get('inventory', [InventoryController::class, 'index'])->name('inventory.index');
+        Route::get('returns', [LoanController::class, 'returns'])->name('returns.index');
         Route::apiResource('loans', LoanController::class)->only(['index', 'store', 'show']);
         Route::post('loans/{loan}/returns', [LoanController::class, 'returnItems'])->name('loans.returns.store');
         Route::get('loans/{loan}/deposit/settlement', [LoanDepositController::class, 'preview'])->name('loans.deposit.preview');
@@ -94,6 +106,9 @@ Route::middleware(['auth', 'active', 'role:Độc giả'])
         Route::post('/my/payments', [PaymentController::class, 'store'])->name('payments.store');
         Route::get('/my/payments/{payment}', [PaymentController::class, 'show'])->name('payments.show');
         Route::post('/my/payments/{payment}/transfer', [PaymentController::class, 'reportTransfer'])->name('payments.transfer');
+        Route::get('/my/favorites', [FavoriteBookController::class, 'index'])->name('favorites.index');
+        Route::post('/my/favorites', [FavoriteBookController::class, 'store'])->name('favorites.store');
+        Route::delete('/my/favorites/{book}', [FavoriteBookController::class, 'destroy'])->whereNumber('book')->name('favorites.destroy');
         Route::get('/my/cart', [ReaderCartController::class, 'show'])->name('cart.show');
         Route::post('/my/cart/items', [ReaderCartController::class, 'addItem'])->name('cart.items.store');
         Route::patch('/my/cart/items/{item}', [ReaderCartController::class, 'updateItem'])->name('cart.items.update');

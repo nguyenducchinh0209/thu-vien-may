@@ -141,7 +141,7 @@ const accountFeatures = (() => {
     if (!reservationRecord) return intro + unavailable(reservationError || 'Chưa tải được thông tin yêu cầu.', 'reservation');
     const {reservation:r,payment,loan}=reservationRecord;
     const statuses={pending:'Chờ duyệt',ready:'Đã duyệt, đang giữ sách',expired:'Đã hết hạn',fulfilled:'Đã giao sách',cancelled:'Đã hủy'};
-    const paymentStatuses={unpaid:'Chưa thanh toán',pending:'Chờ xác nhận thanh toán',confirming:'Đang chờ xác nhận chuyển khoản',paid:'Đã thanh toán'};
+    const paymentStatuses={unpaid:'Chưa thanh toán',pending:'Chờ xác nhận thanh toán',confirming:'Đang chờ xác nhận chuyển khoản',paid:'Đã thanh toán',refunded:'Đã hoàn phí',expired:'Hết hạn thanh toán'};
     const legacyReadyWithoutPayment=r.status==='ready'&&r.payment_status==null&&!payment;
     const detail=[['Mã yêu cầu',r.id],['Sách',r.book?.title],['Mã sách',r.book?.book_code],['Số lượng',r.quantity],['Trạng thái',statuses[r.status]||r.status],['Thanh toán',paymentStatuses[r.payment_status]||(legacyReadyWithoutPayment?'Chưa thiết lập':r.payment_status)],['Ngày duyệt',r.ready_at?date(r.ready_at):''],['Hạn giữ sách',r.expires_at?date(r.expires_at):''],['Số tiền',r.amount==null?'':money(r.amount)]]
       .filter(([,value])=>value!==null&&value!==undefined&&value!=='')
@@ -202,7 +202,7 @@ const accountFeatures = (() => {
     if (!c.quote) return intro + unavailable(c.error || 'Chức năng thanh toán đang được hoàn thiện.', api.capabilities.payments ? 'quote' : '');
     const q = c.quote, payment = c.payment, status = payment ? rules.paymentStatus(payment.status) : 'none';
     const expired = Date.parse(q.expires_at) <= Date.now() || (q.reservation && Date.parse(q.reservation.expires_at) <= Date.now());
-    const labels = {pending:'Chờ thanh toán',confirming:'Đang xác nhận',paid:'Thanh toán thành công',failed:'Thanh toán thất bại',cancelled:'Giao dịch đã hủy',expired:'Đã hết hạn',unknown:'Chưa xác định được trạng thái'};
+    const labels = {pending:'Chờ thanh toán',confirming:'Đang xác nhận',paid:'Thanh toán thành công',failed:'Thanh toán thất bại',cancelled:'Giao dịch đã hủy',expired:'Đã hết hạn',refunded:'Đã hoàn phí',unknown:'Chưa xác định được trạng thái'};
     const selected = payment?.method || c.method;
     const qr = payment?.transfer;
     let transaction = '';
@@ -267,7 +267,15 @@ const accountFeatures = (() => {
     const menu = document.getElementById('account-menu');
     if (!menu) return;
     const label = rules.membershipLabel(membership);
-    const signed = authSession ? `<div class="account-menu-identity">${avatar('account-menu-avatar')}<div><strong>${esc(authSession.name)}</strong><small>${esc(authSession.email)}</small></div></div><div class="account-menu-plan"><span>Gói tài khoản</span><b class="membership-badge">${esc(label)}</b>${label === 'VIP' ? `<small>Đến ${date(membership.expires_at)}</small>` : ''}</div>${button('Hồ sơ cá nhân','profile','account-menu-link')}${button('Sửa thông tin cá nhân','profile-edit','account-menu-link')}${authSession.role === 'Độc giả' ? button(label === 'VIP' ? '✦ Xem gói VIP' : '✦ Đăng ký VIP','vip','account-menu-link account-vip-link') : ''}<button class="account-menu-link account-logout" data-auth-logout>Đăng xuất</button>` : `<div class="account-menu-guest"><strong>Chào bạn đến với Mây</strong><p>Đăng nhập để quản lý sách và hồ sơ của bạn.</p></div>${button('Đăng nhập','login','account-menu-link')}${button('Tạo tài khoản','register','account-menu-link')}`;
+    const plan = authSession?.role === 'Admin' ? '' :
+      `<div class="account-menu-plan"><span>Gói tài khoản</span><b class="membership-badge">${esc(label)}</b>${label === 'VIP' ? `<small>Đến ${date(membership.expires_at)}</small>` : ''}</div>`;
+    const signed = authSession ?
+      `<div class="account-menu-identity">${avatar('account-menu-avatar')}<div><strong>${esc(authSession.name)}</strong><small>${esc(authSession.email)}</small></div></div>` +
+      plan + button('Hồ sơ cá nhân','profile','account-menu-link') +
+      button('Sửa thông tin cá nhân','profile-edit','account-menu-link') +
+      (authSession.role === 'Độc giả' ? button(label === 'VIP' ? '✦ Xem gói VIP' : '✦ Đăng ký VIP','vip','account-menu-link account-vip-link') : '') +
+      '<button class="account-menu-link account-logout" data-auth-logout>Đăng xuất</button>' :
+      `<div class="account-menu-guest"><strong>Chào bạn đến với Mây</strong><p>Đăng nhập để quản lý sách và hồ sơ của bạn.</p></div>${button('Đăng nhập','login','account-menu-link')}${button('Tạo tài khoản','register','account-menu-link')}`;
     if (menu.innerHTML !== signed) menu.innerHTML = signed;
     menu.hidden = !menuOpen;
   }

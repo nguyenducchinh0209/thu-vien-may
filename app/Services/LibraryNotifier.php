@@ -7,17 +7,17 @@ use App\Notifications\LibraryWorkflowNotification;
 
 class LibraryNotifier
 {
-    public function staff(string $title, string $message, ?User $exclude = null): void
+    public function librarians(string $title, string $message, string $route): void
     {
         User::query()
-            ->whereIn('role', ['Admin', 'Thủ thư'])
+            ->where('role', 'Thủ thư')
             ->where('is_locked', false)
-            ->when($exclude, fn ($query) => $query->whereKeyNot($exclude->id))
             ->get()
             ->each(fn (User $recipient) => $recipient->notify(new LibraryWorkflowNotification(
                 $title,
                 $message,
-                $recipient->role === 'Admin' ? 'admin' : 'librarian-home',
+                $route,
+                'Thủ thư',
             )));
     }
 
@@ -27,6 +27,6 @@ class LibraryNotifier
             return;
         }
 
-        $reader->notify(new LibraryWorkflowNotification($title, $message, $route));
+        $reader->notify(new LibraryWorkflowNotification($title, $message, $route, 'Độc giả'));
     }
 }
