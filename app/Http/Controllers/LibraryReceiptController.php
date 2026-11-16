@@ -5,8 +5,10 @@ namespace App\Http\Controllers;
 use App\Models\Fine;
 use App\Models\Loan;
 use App\Models\Payment;
+use App\Models\User;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class LibraryReceiptController extends Controller
 {
@@ -23,7 +25,8 @@ class LibraryReceiptController extends Controller
     public function fine(Fine $fine): View
     {
         $fine->load(['reader:id,name', 'loan', 'loanItem.book:id,title,book_code', 'returnItem.loanItem.book:id,title,book_code',
-            'createdBy:id,name', 'waivedBy:id,name', 'payments.receivedBy:id,name']);
+            'createdBy:id,name', 'waivedBy:id,name', 'payments.receivedBy:id,name',
+            'depositAllocations.settlement.settledBy:id,name']);
 
         return view('library.receipt', ['title' => 'Phiếu phạt', 'fine' => $fine]);
     }
@@ -32,7 +35,12 @@ class LibraryReceiptController extends Controller
     {
         abort_unless($payment->confirmed_at && in_array($payment->status, ['paid', 'refunded'], true), 404);
         $payment->load(['reader:id,name', 'confirmedBy:id,name', 'quote']);
+        $refund = DB::table('payment_refunds')->where('payment_id', $payment->id)->first();
+        $refundPerson = $refund ? User::withTrashed()->find($refund->refunded_by) : null;
 
-        return view('library.receipt', ['title' => 'Biên nhận thu', 'payment' => $payment]);
+        return view('library.receipt', [
+            'title' => 'Biên nhận thu', 'payment' => $payment,
+            'refund' => $refund, 'refundPerson' => $refundPerson,
+        ]);
     }
 }

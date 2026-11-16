@@ -389,6 +389,13 @@ class PaymentController extends Controller
         $alreadyReported = $payment->status === 'confirming';
         $payment = DB::transaction(function () use ($request, $payment): Payment {
             $initial = Payment::query()->whereKey($payment->id)->firstOrFail();
+            $reservation = null;
+            if ($initial->reservation_id) {
+                User::query()->withTrashed()->whereKey($initial->reader_id)->lockForUpdate()->firstOrFail();
+                $reservationInfo = Reservation::query()->whereKey($initial->reservation_id)->firstOrFail();
+                Book::withTrashed()->whereKey($reservationInfo->book_id)->lockForUpdate()->firstOrFail();
+                $reservation = Reservation::query()->whereKey($initial->reservation_id)->lockForUpdate()->firstOrFail();
+            }
             $fine = $initial->fine_id
                 ? Fine::query()->whereKey($initial->fine_id)->lockForUpdate()->firstOrFail()
                 : null;
@@ -407,7 +414,6 @@ class PaymentController extends Controller
                 abort(409, 'Báo giá đã hết hạn.');
             }
             if ($payment->reservation_id) {
-                $reservation = Reservation::query()->whereKey($payment->reservation_id)->lockForUpdate()->firstOrFail();
                 if ($reservation->status !== 'ready' || ! $reservation->expires_at?->isFuture()) {
                     abort(409, 'Thời hạn giữ sách đã hết. Vui lòng liên hệ thư viện để được hướng dẫn.');
                 }
@@ -494,6 +500,14 @@ class PaymentController extends Controller
         $alreadyPaid = $payment->status === 'paid';
         $payment = DB::transaction(function () use ($request, $payment, $data): Payment {
             $initial = Payment::query()->whereKey($payment->id)->firstOrFail();
+            $reservation = null;
+            $reservationBook = null;
+            if ($initial->reservation_id) {
+                $reader = User::query()->withTrashed()->whereKey($initial->reader_id)->lockForUpdate()->firstOrFail();
+                $reservationInfo = Reservation::query()->whereKey($initial->reservation_id)->firstOrFail();
+                $reservationBook = Book::withTrashed()->whereKey($reservationInfo->book_id)->lockForUpdate()->firstOrFail();
+                $reservation = Reservation::query()->whereKey($initial->reservation_id)->lockForUpdate()->firstOrFail();
+            }
             $fine = $initial->fine_id
                 ? Fine::query()->whereKey($initial->fine_id)->lockForUpdate()->firstOrFail()
                 : null;
@@ -518,9 +532,19 @@ class PaymentController extends Controller
                 abort(409, 'Báo giá đã hết hạn; giao dịch chưa được xác nhận.');
             }
 
-            $reservation = null;
             if ($payment->reservation_id) {
-                $reservation = Reservation::query()->whereKey($payment->reservation_id)->lockForUpdate()->firstOrFail();
+                if ($payment->reader_id !== $reservation->reader_id
+                    || $payment->reader_id !== $reader->id
+                    || $reader->trashed()
+                    || $reader->role !== 'Độc giả'
+                    || $reader->is_locked) {
+                    throw ValidationException::withMessages([
+                        'payment' => 'Không thể xác nhận giao dịch: tài khoản độc giả của yêu cầu không còn hoạt động hoặc đã thay đổi.',
+                    ]);
+                }
+                if ($reservationBook->trashed()) {
+                    abort(409, 'Không thể xác nhận giao dịch vì sách không còn trong danh mục hoạt động.');
+                }
                 if ($reservation->status !== 'ready' || ! $reservation->expires_at?->isFuture()) {
                     abort(409, 'Thời hạn giữ sách đã hết; giao dịch chưa được xác nhận.');
                 }

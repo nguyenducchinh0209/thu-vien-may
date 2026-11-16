@@ -127,6 +127,10 @@ const accountFeatures = (() => {
   function reservationViewLink(row) {
     return row?.id ? button('Xem chi tiết',`reservation/${encodeURIComponent(row.id)}`,'secondary-button reservation-detail-link') : '';
   }
+  function reservationCancelAction(row) {
+    return api.capabilities.reservationWorkflow && row?.raw_status === 'pending' && row.id
+      ? `<button class="secondary-button" type="button" data-reservation-cancel="${esc(row.id)}">Hủy yêu cầu</button>` : '';
+  }
   function finePaymentLink(row) {
     if (!api.capabilities.payments || !row?.id) return '';
     if (row.raw_status === 'unpaid' && !['pending','confirming','paid'].includes(row.payment_status)) return button('Thanh toán khoản phạt',`checkout/fine/${encodeURIComponent(row.id)}`,'secondary-button fine-payment-link');
@@ -147,6 +151,8 @@ const accountFeatures = (() => {
       .filter(([,value])=>value!==null&&value!==undefined&&value!=='')
       .map(([label,value])=>`<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('');
     const statusMessage=r.status==='pending'?'Yêu cầu đang chờ nhân viên thư viện duyệt.':legacyReadyWithoutPayment?'Phiếu chưa có báo giá. Khi tạo phiếu thanh toán, phí hiện tại của sách sẽ được áp dụng; hạn giữ sách không đổi.':r.status==='ready'&&r.payment_status==='unpaid'?'Yêu cầu đã được duyệt. Thanh toán chỉ khả dụng trong thời hạn giữ sách.':r.status==='ready'&&['pending','confirming'].includes(payment?.status)?'Đã ghi nhận giao dịch; đang chờ nhân viên thư viện xác nhận.':'';
+    const cancelAction=r.status==='pending'&&api.capabilities.reservationWorkflow
+      ? `<button class="secondary-button" type="button" data-reservation-cancel="${esc(r.id)}">Hủy yêu cầu</button>` : '';
     const payAction=r.status==='ready'&&api.capabilities.reservationWorkflow&&api.capabilities.payments&&Number.isFinite(Date.parse(r.expires_at))&&Date.parse(r.expires_at)>Date.now()
       ? payment&&['pending','confirming'].includes(payment.status)
         ? button('Xem thanh toán',`checkout/reservation/${encodeURIComponent(r.id)}`,'secondary-button reservation-payment')
@@ -156,7 +162,7 @@ const accountFeatures = (() => {
       : '';
     const receipt=payment?.status==='paid'?`<section class="profile-card reservation-receipt"><h2>Biên nhận thanh toán</h2><dl class="profile-details">${[['Mã giao dịch',payment.id],['Trạng thái','Đã xác nhận thanh toán'],['Phương thức',payment.method==='cash'?'Tiền mặt':payment.method==='bank_transfer'?'Chuyển khoản mô phỏng':'Khác'],['Số tiền',money(payment.amount)],['Thời điểm xác nhận',payment.confirmed_at?date(payment.confirmed_at):'']].map(([label,value])=>`<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${payment.method==='bank_transfer'&&payment.transfer?.simulated===true?'<p class="fine-print">Thông tin chuyển khoản này là mô phỏng; không chuyển tiền thật.</p>':''}</section>`:'';
     const linkedLoan=loan?`<section class="profile-card reservation-loan"><h2>Phiếu mượn đã liên kết</h2><dl class="profile-details">${[['Mã phiếu',loan.id],['Trạng thái',loan.status],['Ngày nhận',loan.issued_at?date(loan.issued_at):''],['Hạn trả',loan.due_at?date(loan.due_at):''],['Phí mượn',loan.rental_fee_total==null?'':money(loan.rental_fee_total)],['Đã thu',loan.rental_fee_received==null?'':money(loan.rental_fee_received)]].filter(([,value])=>value!==null&&value!==undefined&&value!=='').map(([label,value])=>`<div><dt>${label}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl></section>`:'';
-    return intro + `<section class="profile-card reservation-detail-card"><div class="eyebrow">YÊU CẦU ĐẶT TRƯỚC</div><h2>${esc(r.book?.title||'Sách')}</h2><dl class="profile-details">${detail}</dl>${statusMessage?`<p class="fine-print">${esc(statusMessage)}</p>`:''}${payAction}</section>${receipt}${linkedLoan}`;
+    return intro + `<section class="profile-card reservation-detail-card"><div class="eyebrow">YÊU CẦU ĐẶT TRƯỚC</div><h2>${esc(r.book?.title||'Sách')}</h2><dl class="profile-details">${detail}</dl>${statusMessage?`<p class="fine-print">${esc(statusMessage)}</p>`:''}${cancelAction}${payAction}</section>${receipt}${linkedLoan}`;
   }
   async function loadQuote(target) {
     target.loading = true; target.error = '';
@@ -333,6 +339,22 @@ const accountFeatures = (() => {
       if(event.target.closest('#library-support [data-page-link]')){chatOpen=false;renderChat();}
       if(event.target.closest('[data-chat-toggle],[data-chat-close]')) {chatOpen=!chatOpen;renderChat();if(chatOpen)document.querySelector('#support-input:not(:disabled)')?.focus();}
       const retryButton=event.target.closest('[data-feature-retry]');if(retryButton)retry(retryButton.dataset.featureRetry);
+      const cancelReservation=event.target.closest('[data-reservation-cancel]');
+      if(cancelReservation&&api.capabilities.reservationWorkflow){
+        const id=cancelReservation.dataset.reservationCancel;
+        if(!confirm('Bạn có chắc muốn hủy yêu cầu đặt trước đang chờ duyệt này?'))return;
+        cancelReservation.disabled=true;
+        api.cancelReservation(id,{body:{expected_status:'pending'}}).then(async()=>{
+          await authRefreshReaderData();
+          if(route?.page==='reservation-detail'&&String(route.id)===String(id))await loadReservation(id);
+          toast('Đã hủy yêu cầu đặt trước.');
+        }).catch(async error=>{
+          await authRefreshReaderData();
+          if(route?.page==='reservation-detail'&&String(route.id)===String(id))await loadReservation(id);
+          toast(error.message||'Không thể hủy yêu cầu đặt trước.');
+        })
+          .finally(()=>{if(cancelReservation.isConnected)cancelReservation.disabled=false;});
+      }
       if(event.target.closest('[data-payment-create]'))updatePayment();
       if(event.target.closest('[data-payment-check]'))updatePayment(true);
       if(event.target.closest('[data-payment-report]'))reportTransfer();
@@ -356,6 +378,7 @@ const accountFeatures = (() => {
     handles:page=>['profile','profile-edit','vip','checkout','help','reservation-detail'].includes(page),
     paymentAction:row=>api.capabilities.reservationWorkflow&&api.capabilities.payments ? reservationPaymentLink(row) : '',
     reservationViewAction:reservationViewLink,
+    reservationCancelAction,
     finePaymentAction:finePaymentLink,
   };
 })();

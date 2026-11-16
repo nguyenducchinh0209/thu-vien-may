@@ -8,6 +8,7 @@ use App\Models\Book;
 use App\Models\Loan;
 use App\Models\Payment;
 use App\Models\Reservation;
+use App\Models\User;
 use App\Services\BookAvailability;
 use App\Services\LibraryNotifier;
 use App\Services\LoanIssuanceService;
@@ -119,11 +120,24 @@ class ReservationController extends Controller
 
     public function cancel(Request $request, Reservation $reservation, LibraryNotifier $notifier): JsonResponse
     {
-        DB::transaction(function () use ($request, $reservation): void {
+        $expectedStatus = $request->validate([
+            'expected_status' => ['nullable', 'in:pending,ready'],
+        ])['expected_status'] ?? null;
+
+        DB::transaction(function () use ($request, $reservation, $expectedStatus): void {
             Book::withTrashed()->whereKey($reservation->book_id)->lockForUpdate()->first();
             $reservation = Reservation::query()->whereKey($reservation->id)->lockForUpdate()->firstOrFail();
             abort_unless($reservation->reader_id === $request->user()->id, 404);
             abort_unless(in_array($reservation->status, ['pending', 'ready'], true), 409, 'Yêu cầu này không thể hủy.');
+            if ($expectedStatus !== null && $reservation->status !== $expectedStatus) {
+                abort(409, 'Yêu cầu đã thay đổi trạng thái. Hãy tải lại danh sách trước khi tiếp tục.');
+            }
+
+            $payment = Payment::query()->where('reservation_id', $reservation->id)->lockForUpdate()->first();
+            if ($reservation->status === 'ready'
+                && ($reservation->payment_status === 'paid' || $payment?->status === 'paid')) {
+                abort(409, 'Yêu cầu đã được thanh toán và không thể hủy tại đây. Hãy liên hệ thư viện để được hướng dẫn.');
+            }
 
             $reservation->update([
                 'status' => 'cancelled',
@@ -186,21 +200,34 @@ class ReservationController extends Controller
     private function approveReservation(Request $request, Reservation $reservation, bool $paymentWorkflow, LibraryNotifier $notifier): JsonResponse
     {
         DB::transaction(function () use ($request, $reservation, $paymentWorkflow): void {
+            $reader = User::query()->withTrashed()->whereKey($reservation->reader_id)->lockForUpdate()->first();
             $book = Book::query()->whereKey($reservation->book_id)->lockForUpdate()->firstOrFail();
             $reservation = Reservation::query()->whereKey($reservation->id)->lockForUpdate()->firstOrFail();
+
+            if ($reservation->book_id !== $book->id || $reservation->reader_id !== $reader?->id) {
+                throw ValidationException::withMessages(['reservation' => 'Yêu cầu đặt sách đã thay đổi. Tải lại trang rồi thử lại.']);
+            }
+            if (! $reader || $reader->trashed() || $reader->role !== 'Độc giả' || $reader->is_locked) {
+                throw ValidationException::withMessages(['reservation' => 'Không thể duyệt vì tài khoản độc giả không còn hoạt động.']);
+            }
 
             if ($reservation->status !== 'pending') {
                 throw ValidationException::withMessages(['reservation' => 'Chỉ yêu cầu đang chờ mới có thể duyệt.']);
             }
 
             $hasEarlierPending = Reservation::query()
-                ->where('book_id', $reservation->book_id)
-                ->where('status', 'pending')
+                ->join('users', 'users.id', '=', 'reservations.reader_id')
+                ->where('reservations.book_id', $reservation->book_id)
+                ->where('reservations.status', 'pending')
+                ->whereNull('users.deleted_at')
+                ->where('users.role', 'Độc giả')
+                ->where('users.is_locked', false)
+                ->where('reservations.quantity', '<=', $book->total_quantity)
                 ->where(function (Builder $query) use ($reservation): void {
-                    $query->where('created_at', '<', $reservation->created_at)
+                    $query->where('reservations.created_at', '<', $reservation->created_at)
                         ->orWhere(fn (Builder $query) => $query
-                            ->where('created_at', $reservation->created_at)
-                            ->where('id', '<', $reservation->id));
+                            ->where('reservations.created_at', $reservation->created_at)
+                            ->where('reservations.id', '<', $reservation->id));
                 })
                 ->exists();
 

@@ -351,6 +351,10 @@ document.addEventListener('submit', async event => {
       });
       closeModal();
       toast(result.message);
+      showModal('<section class="login-form"><h2 id="modal-title">Đã ghi nhận hoàn phí</h2><p>' +
+        authEscape(result.message || 'Biên nhận hoàn phí đã được lưu.') + '</p><a class="primary-button" href="/staff/receipts/payments/' +
+        encodeURIComponent(form.dataset.payment) + '" target="_blank" rel="noopener">In biên nhận hoàn phí</a>' +
+        '<button type="button" class="secondary-button" data-close-modal>Đóng</button></section>');
       staffLoadReport();
       authRefreshStaffData();
     } catch (error) {
@@ -373,16 +377,28 @@ async function staffShowLoan(id) {
       const quantity = (returned.items || []).reduce((total, item) => total + Number(item.quantity), 0);
       events.push({at: returned.returned_at, text: 'Nhận trả ' + quantity + ' bản · ' + (returned.returned_by?.name || 'Thư viện')});
     }
+    const settled = loan.deposit?.settlement;
+    const settlementAllocations = Array.isArray(settled?.allocations) ? settled.allocations : [];
+    const settledFinePaymentIds = new Set(settlementAllocations
+      .map(allocation => allocation.fine_payment_id).filter(id => id !== null && id !== undefined).map(String));
     for (const fine of loan.fines || []) {
       events.push({at: fine.created_at, text: 'Lập phạt ' + (fine.fine_code || '#' + fine.id) + ' · ' + fine.reason + ' · ' + authMoney(fine.amount)});
       for (const payment of fine.payments || []) {
+        if (settledFinePaymentIds.has(String(payment.id))) continue;
         events.push({at: payment.paid_at, text: 'Thu phạt ' + (fine.fine_code || '#' + fine.id) + ' · ' + authMoney(payment.amount)});
       }
       if (fine.waived_at) events.push({at: fine.waived_at, text: 'Miễn phạt ' + (fine.fine_code || '#' + fine.id) + ' · ' + (fine.waiver_reason || '')});
     }
-    const settled = loan.deposit?.settlement;
     if (settled) events.push({at: settled.settled_at, text: 'Tất toán cọc · hoàn ' + authMoney(settled.refund_amount) +
       ' · thu thêm ' + authMoney(settled.additional_received)});
+    for (const allocation of settlementAllocations) {
+      const fine = (loan.fines || []).find(item => Number(item.id) === Number(allocation.fine_id));
+      if (!fine) continue;
+      const method = settled.additional_method === 'cash' ? 'tiền mặt' : settled.additional_method === 'bank_transfer' ? 'chuyển khoản' : 'khác';
+      events.push({at: settled.settled_at, text: 'Phân bổ cọc cho phạt ' + (fine.fine_code || '#' + fine.id) +
+        ' · cọc ' + authMoney(allocation.deposit_amount) + ' · thu thêm ' + authMoney(allocation.additional_amount) +
+        (Number(allocation.additional_amount) > 0 ? ' (' + method + ')' : '')});
+    }
     const history = events.sort((left, right) => new Date(left.at) - new Date(right.at)).map(item =>
       '<li><small>' + staffVietnamTime(item.at) + '</small> · ' + authEscape(item.text) + '</li>').join('');
     showModal('<section class="login-form"><h2 id="modal-title">Phiếu mượn #' + loan.id + '</h2><p>' +

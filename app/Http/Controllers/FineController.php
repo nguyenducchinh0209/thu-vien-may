@@ -11,6 +11,7 @@ use App\Models\Payment;
 use App\Services\LibraryCalendar;
 use App\Services\LibraryMoney;
 use App\Services\LibraryNotifier;
+use App\Services\BookAvailability;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -67,8 +68,8 @@ class FineController extends Controller
             'amount' => ['required', 'numeric', 'min:0.01', 'max:9999999999.99', 'decimal:0,2'],
             'request_key' => ['required', 'string', 'max:80'],
         ]);
-        [$fineId, $created] = DB::transaction(function () use ($request, $data): array {
-            $loanId = LoanItem::query()->whereKey($data['loan_item_id'])->value('loan_id');
+        $loanId = LoanItem::query()->whereKey($data['loan_item_id'])->value('loan_id');
+        [$fineId, $created] = DB::transaction(function () use ($request, $data, $loanId): array {
             $loan = Loan::query()->whereKey($loanId)->lockForUpdate()->firstOrFail();
             $existing = Fine::where('request_key', $data['request_key'])->lockForUpdate()->first();
             if ($existing) {
@@ -107,6 +108,12 @@ class FineController extends Controller
             } elseif ($data['type'] === 'unusable') {
                 $available = $loanItem->returned_quantity - $loanItem->written_off_quantity;
                 if ($data['quantity'] > $available) throw ValidationException::withMessages(['quantity' => "Chỉ có {$available} bản đã trả để thu hồi khỏi lưu hành."]);
+                $occupied = app(BookAvailability::class)->occupied($book);
+                if ($book->total_quantity - $data['quantity'] < $occupied) {
+                    throw ValidationException::withMessages([
+                        'quantity' => 'Tồn kho đang được cam kết cho khoản mượn đang hoạt động hoặc yêu cầu đặt sách sẵn sàng. Hãy giải quyết các cam kết này trước khi thu hồi sách khỏi lưu hành.',
+                    ]);
+                }
                 $loanItem->increment('written_off_quantity', $data['quantity']);
                 $book->decrement('total_quantity', $data['quantity']);
             } elseif ($data['quantity'] > $loanItem->quantity) {

@@ -140,9 +140,11 @@ class LoanController extends Controller
         abort_unless($loan->reader_id === $request->user()->id, 404);
         $loan->load([
             'issuer:id,name', 'items.book:id,title,book_code,cover_image_path',
-            'returns.items.loanItem.book:id,title,book_code', 'deposit.settlement',
+            'returns.items.loanItem.book:id,title,book_code',
+            'deposit.settlement.allocations:id,settlement_id,fine_id,deposit_amount,additional_amount',
             'fines.payments.receivedBy:id,name', 'fines.waivedBy:id,name',
         ]);
+        $this->attachFinePaymentIds($loan);
         $loan->setAttribute('money_summary', LoanDepositBalance::summary($loan));
         return response()->json(['loan' => $loan]);
     }
@@ -155,7 +157,7 @@ class LoanController extends Controller
                 'issuer:id,name',
                 'items.book:id,title,book_code,cover_image_path,rental_fee',
                 'items.book.authors:id,name',
-                'deposit.settlement',
+                'deposit.settlement.allocations:id,settlement_id,fine_id,deposit_amount,additional_amount',
                 'fines.reader:id,name',
                 'fines.loanItem.book:id,title,book_code',
                 'fines.createdBy:id,name',
@@ -163,8 +165,19 @@ class LoanController extends Controller
                 'returns.returnedBy:id,name',
                 'returns.items.loanItem.book:id,title,book_code',
             ]);
+        $this->attachFinePaymentIds($loan);
         $loan->setAttribute('money_summary', LoanDepositBalance::summary($loan));
         return response()->json(['loan' => $loan]);
+    }
+
+    private function attachFinePaymentIds(Loan $loan): void
+    {
+        $prefix = 'Đối soát cọc phiếu mượn #'.$loan->id;
+        foreach ($loan->deposit?->settlement?->allocations ?? [] as $allocation) {
+            $fine = $loan->fines->firstWhere('id', $allocation->fine_id);
+            $payment = $fine?->payments->first(fn ($row) => str_starts_with((string) $row->receipt_note, $prefix));
+            $allocation->setAttribute('fine_payment_id', $payment?->id);
+        }
     }
 
     public function returnItems(StoreLoanReturnRequest $request, Loan $loan, LibraryNotifier $notifier): JsonResponse

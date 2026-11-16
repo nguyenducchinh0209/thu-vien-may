@@ -75,11 +75,14 @@ test('reader reservations and fines are personal while staff operations stay pro
   assert.equal(context.isStaffPage('fines'), false);
   assert.equal(context.isStaffPage('loans'), true);
   context.authSession = {role:'Thủ thư'};
+  assert.equal(context.isStaffPage('authors'), true);
+  assert.equal(context.isStaffPage('accounts'), false);
   assert.equal(context.isStaffPage('reservations'), true);
   assert.equal(context.isStaffPage('fines'), true);
   assert.equal(context.isStaffPage('loans'), true);
   assert.equal(context.isAdminCounterPage('loans'), false);
   context.authSession = {role:'Admin'};
+  assert.equal(context.isStaffPage('authors'), true);
   assert.equal(context.isStaffPage('fines'), true);
   for (const page of ['librarian-home','reservations','payments','loans','returns','readers']) {
     assert.equal(context.isAdminCounterPage(page), true);
@@ -106,6 +109,24 @@ test('fine rows offer waiver to Admin and collection to the librarian', () => {
   assert.match(librarian, /data-op-pay="17"/);
   assert.doesNotMatch(librarian, /data-op-waive=/);
   assert.doesNotMatch(renderOperationRows('fines', [{...fine,status:'Đã miễn',raw_status:'waived'}], 'Admin'), /data-op-waive=/);
+});
+
+test('authors workspace is available to both staff roles with complete CRUD controls', () => {
+  for (const role of ['Admin', 'Thủ thư']) {
+    const html = renderOperationRows('authors', [{id:12, name:'Author One', country:'Biography', books:2}], role);
+    assert.match(html, /Author One/);
+    assert.match(html, /data-op-edit="authors:12"/);
+    assert.match(html, /data-op-delete="authors:12"/);
+  }
+  const context = vm.createContext({window:{libraryUser:{role:'Thủ thư'}}});
+  const start = operationsSource.indexOf('function opStaffPage(key){');
+  const end = operationsSource.indexOf('\nfunction opReset', start);
+  context.opConfig={authors:{},accounts:{}};
+  vm.runInContext(`${operationsSource.slice(start,end)}; globalThis.canOpen=opStaffPage;`, context);
+  assert.equal(context.canOpen('authors'), true);
+  assert.equal(context.canOpen('accounts'), false);
+  context.window.libraryUser.role='Độc giả';
+  assert.equal(context.canOpen('authors'), false);
 });
 
 test('reservation request uses the concise QR label and removes redundant cart fee notes', () => {
@@ -146,6 +167,7 @@ test('counter navigation is in the librarian menu and the payment link follows t
   const librarianMenu = sidebarSource.slice(sidebarSource.indexOf('id="librarian-nav"'), sidebarSource.indexOf('id="admin-nav"'));
   const adminMenu = sidebarSource.slice(sidebarSource.indexOf('id="admin-nav"'), sidebarSource.indexOf('class="sidebar-bottom"'));
   assert.match(librarianMenu, /data-page="payments" data-feature="payments"/);
+  assert.match(librarianMenu, /href="#authors" class="nav-link" data-page="authors"/);
   for (const page of ['reservations', 'payments', 'loans', 'returns']) {
     assert.ok(librarianMenu.includes(`data-page="${page}"`));
     assert.ok(!adminMenu.includes(`data-page="${page}"`));

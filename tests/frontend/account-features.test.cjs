@@ -53,6 +53,48 @@ test('reservation detail fetch is an owner-scoped read-only GET through the feat
   assert.equal(calls[0].url,'http://localhost/my/reservations/7');assert.equal(calls[0].options.method,'GET');
   assert.equal(result.reservation.id,7);
 });
+test('reservation cancellation uses the explicit owner-facing DELETE endpoint',async()=>{
+  const calls=[];const {api}=harness({capabilities:{reservationWorkflow:true}},async(url,options)=>{calls.push({url,options});return response({message:'Cancelled'});});
+  await api.cancelReservation('7',{body:{expected_status:'pending'}});
+  assert.equal(calls[0].url,'http://localhost/reservations/7');
+  assert.equal(calls[0].options.method,'DELETE');
+  assert.equal(calls[0].options.headers['X-CSRF-TOKEN'],'test-csrf');
+  assert.deepEqual(JSON.parse(calls[0].options.body),{expected_status:'pending'});
+});
+test('reader cancellation sends its status precondition and refreshes list and open detail after DELETE',async()=>{
+  const calls=[];let refreshes=0,confirmed=false;
+  const h=harness({capabilities:{reservationWorkflow:true}},async(url,options)=>{calls.push({url,options});return response({message:'Cancelled'});});
+  h.context.confirm=()=>confirmed;
+  h.context.authRefreshReaderData=async()=>{refreshes++;};
+  h.feature.init();
+  const button={dataset:{reservationCancel:'7'},disabled:false,isConnected:true};
+  const click=()=>h.events.get('click').forEach(handler=>handler({target:{closest:selector=>selector==='[data-reservation-cancel]'?button:null}}));
+  click();await tick();
+  assert.equal(calls.length,0);
+  confirmed=true;click();await tick();await tick();
+  assert.equal(calls.length,1);assert.equal(calls[0].options.method,'DELETE');assert.deepEqual(JSON.parse(calls[0].options.body),{expected_status:'pending'});assert.equal(refreshes,1);
+});
+test('stale reservation cancellation refreshes reader state and the open detail before showing the failure',async()=>{
+  const calls=[];let refreshes=0,toasts=[];
+  const h=harness({capabilities:{reservationWorkflow:true}},async(url,options)=>{
+    calls.push({url,options});
+    return options.method==='DELETE'
+      ? {ok:false,json:async()=>({message:'Yêu cầu đặt trước đã thay đổi. Vui lòng tải lại.'})}
+      : response({reservation:{id:7,status:'ready'},payment:null,loan:null});
+  });
+  h.context.confirm=()=>true;
+  h.context.toast=message=>toasts.push(message);
+  h.context.authRefreshReaderData=async()=>{refreshes++;};
+  h.feature.init();
+  h.feature.setRoute('reservation/7');h.context.state.page='reservation-detail';h.feature.enter();await tick();
+  const button={dataset:{reservationCancel:'7'},disabled:false,isConnected:true};
+  h.events.get('click').forEach(handler=>handler({target:{closest:selector=>selector==='[data-reservation-cancel]'?button:null}}));
+  await tick();await tick();await tick();
+  assert.equal(calls.filter(call=>call.options.method==='DELETE').length,1);
+  assert.equal(calls.filter(call=>call.url.endsWith('/my/reservations/7')).length,2);
+  assert.equal(refreshes,1);
+  assert.deepEqual(toasts,['Yêu cầu đặt trước đã thay đổi. Vui lòng tải lại.']);
+});
 test('foreign endpoints, invalid JSON and server errors are surfaced',async()=>{
   const foreign=harness({capabilities:{chat:true},endpoints:{chat:'https://other.test/chat'}});
   await assert.rejects(foreign.api.chat('hello',[]),/Địa chỉ/);
@@ -89,14 +131,15 @@ test('reservation detail shows every state without creating payments and keeps p
     assert.equal(calls.length,1);assert.equal(calls[0].url,`http://localhost/my/reservations/${fixture.reservation.id}`);assert.equal(calls[0].options.method,'GET');
     assert.doesNotMatch(html,/data-payment-create/);
     if(fixture.reservation.status==='pending'){
-      assert.match(html,/đang chờ nhân viên thư viện duyệt/);assert.doesNotMatch(html,/checkout\/reservation\/7/);
+      assert.match(html,/đang chờ nhân viên thư viện duyệt/);assert.match(html,/data-reservation-cancel="7"/);assert.doesNotMatch(html,/checkout\/reservation\/7/);
     } else if(fixture.reservation.status==='ready'&&fixture.reservation.payment_status==null){
+      assert.doesNotMatch(html,/data-reservation-cancel/);
       assert.match(html,/Tạo phiếu thanh toán/);assert.match(html,/phí hiện tại của sách sẽ được áp dụng/);assert.match(html,/hạn giữ sách không đổi/);
       assert.doesNotMatch(html,/Số tiền/);
     } else if(fixture.reservation.status==='ready'){
       assert.match(html,/checkout\/reservation\/7/);
     } else if(fixture.reservation.status==='expired'){
-      assert.match(html,/Đã hết hạn/);assert.doesNotMatch(html,/checkout\/reservation\/7/);
+      assert.match(html,/Đã hết hạn/);assert.doesNotMatch(html,/checkout\/reservation\/7/);assert.doesNotMatch(html,/data-reservation-cancel/);
     } else {
       assert.match(html,/Biên nhận thanh toán/);assert.match(html,/pay-7/);assert.match(html,/Phiếu mượn đã liên kết/);assert.match(html,/22/);
     }
@@ -165,6 +208,7 @@ test('reader list keeps a detail link for every reservation and offers payment o
     fmtPrice:value=>`${value}đ`,
     accountFeatures:{
       reservationViewAction:row=>`<a data-page-link="reservation/${row.id}">Xem chi tiết</a>`,
+      reservationCancelAction:row=>row.raw_status==='pending'?`<button data-reservation-cancel="${row.id}">Hủy yêu cầu</button>`:'',
       paymentAction:()=>'',
       finePaymentAction:row=>row.raw_status==='unpaid'?`<a data-page-link="checkout/fine/${row.id}">Thanh toán khoản phạt</a>`:'',
     },
@@ -173,6 +217,8 @@ test('reader list keeps a detail link for every reservation and offers payment o
   vm.runInContext(`${source}; globalThis.renderReaderPage=authPersonalPage;`,context);
   const reservations=vm.runInContext("renderReaderPage('reservations')",context);
   for(const id of [1,2,3])assert.match(reservations,new RegExp(`data-page-link="reservation/${id}"`));
+  assert.match(reservations,/data-reservation-cancel="1"/);
+  assert.doesNotMatch(reservations,/data-reservation-cancel="2"|data-reservation-cancel="3"/);
   const fines=vm.runInContext("renderReaderPage('fines')",context);
   assert.match(fines,/data-page-link="checkout\/fine\/51"/);
   assert.doesNotMatch(fines,/data-page-link="checkout\/fine\/52"/);

@@ -24,6 +24,7 @@
         <a href="#loans" class="nav-link" data-page="loans"><span class="nav-icon" data-icon="book"></span><span>Phiếu mượn</span></a>
         <a href="#returns" class="nav-link" data-page="returns"><span class="nav-icon" data-icon="clock"></span><span>Nhận trả sách</span></a>
         <a href="#readers" class="nav-link" data-page="readers"><span class="nav-icon" data-icon="user"></span><span>Độc giả</span></a>
+        <a href="#authors" class="nav-link" data-page="authors"><span class="nav-icon" data-icon="user"></span><span>Tác giả</span></a>
         <a href="#inventory" class="nav-link" data-page="inventory"><span class="nav-icon" data-icon="book"></span><span>Kho sách</span></a>
         <a href="#fines" class="nav-link" data-page="fines"><span class="nav-icon" data-icon="chart"></span><span>Vi phạm</span></a>
         <a href="#reports" class="nav-link" data-page="reports"><span class="nav-icon" data-icon="chart"></span><span>Báo cáo</span></a>

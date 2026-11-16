@@ -7,7 +7,7 @@
   }
   function createLibraryFeatureApi(config = {}, transport = (...args) => fetch(...args)) {
     const capabilities = Object.freeze({membership:false, plans:false, payments:false, reservationWorkflow:false, chat:false, gender:false, ...config.capabilities});
-    const endpoints = {membership:'/my/membership', plans:'/membership/plans', quote:'/my/payment-quotes', payments:'/my/payments', reservations:'/my/reservations', cartReservations:'/my/cart/reservations', staffReservations:'/staff/reservations', staffPayments:'/staff/payments', chat:'/support/chat', ...config.endpoints};
+    const endpoints = {membership:'/my/membership', plans:'/membership/plans', quote:'/my/payment-quotes', payments:'/my/payments', reservations:'/my/reservations', reservationCancellation:'/reservations', cartReservations:'/my/cart/reservations', staffReservations:'/staff/reservations', staffPayments:'/staff/payments', chat:'/support/chat', ...config.endpoints};
     async function request(capability, endpoint, {method='GET', body, signal} = {}) {
       if (!capabilities[capability]) throw new FeatureUnavailable();
       const url = new URL(endpoint, root.location.origin);
@@ -53,6 +53,7 @@
       },
       reservations: options => request('reservationWorkflow', endpoints.reservations, options),
       reservation: (id, options) => request('reservationWorkflow', `${endpoints.reservations}/${encodeURIComponent(id)}`, options),
+      cancelReservation: (id, options={}) => request('reservationWorkflow', `${endpoints.reservationCancellation}/${encodeURIComponent(id)}`, {...options, method:'DELETE'}),
       chat: (message, history, options={}) => request('chat', endpoints.chat, {...options, method:'POST', body:{message, history:history.slice(-8)}}),
     });
   }

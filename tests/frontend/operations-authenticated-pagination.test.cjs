@@ -36,12 +36,14 @@ test('author access and customer access are restricted before requesting staff d
   const calls = [];
   const context = vm.createContext({
     window: {libraryUser: {id: 1, role: 'Thủ thư'}}, labels: {}, state: {},
+    URLSearchParams,
     authRequest: async path => calls.push(path),
     document: {addEventListener() {}}, render() {},
   });
   vm.runInContext(source, context);
   await vm.runInContext("opLoad('authors')", context);
+  assert.deepEqual(calls, ['/staff/authors?page=1&per_page=8']);
   context.window.libraryUser = {id: 2, role: 'Độc giả'};
   await vm.runInContext("opLoad('loans')", context);
-  assert.deepEqual(calls, []);
+  assert.deepEqual(calls, ['/staff/authors?page=1&per_page=8']);
 });

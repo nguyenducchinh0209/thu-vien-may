@@ -113,7 +113,14 @@
         @endif
         @foreach($fine->payments as $row)
             <h2>Biên nhận thu #{{ $row->id }}</h2>
-            <p>{{ $money($row->amount) }} · {{ $method($row->method) }} · {{ $date($row->paid_at) }} · {{ $row->receivedBy?->name }}</p>
+            @php($allocation = $fine->depositAllocations->first())
+            @if($allocation)
+                <p>Tổng tiền phạt đã đối soát {{ $money($row->amount) }} · {{ $date($row->paid_at) }} · {{ $row->receivedBy?->name }}</p>
+                <p>Đã trừ từ tiền cọc {{ $money($allocation->deposit_amount) }}</p>
+                <p>Tiền thu thêm thực tế {{ $money($allocation->additional_amount) }} @if((float) $allocation->additional_amount > 0) · {{ $method($allocation->settlement?->additional_method) }} @endif</p>
+            @else
+                <p>{{ $money($row->amount) }} · {{ $method($row->method) }} · {{ $date($row->paid_at) }} · {{ $row->receivedBy?->name }}</p>
+            @endif
             @if($row->receipt_note)<p>{{ $row->receipt_note }}</p>@endif
         @endforeach
     @endisset
@@ -132,6 +139,18 @@
             <p>{{ $item['title'] ?? 'Khoản thu' }} · {{ $item['quantity'] ?? 1 }} · {{ $money($item['line_amount'] ?? $payment->amount) }}</p>
         @endforeach
         @if($payment->receipt_note)<p>{{ $payment->receipt_note }}</p>@endif
+    @endisset
+
+    @isset($refund)
+        <h2>Biên nhận hoàn phí</h2>
+        <dl>
+            <dt>Mã biên nhận hoàn</dt><dd>{{ $refund->receipt_reference }}</dd>
+            <dt>Thời điểm hoàn</dt><dd>{{ $date($refund->refunded_at) }}</dd>
+            <dt>Người thực hiện</dt><dd>{{ $refundPerson?->name ?? '—' }}</dd>
+            <dt>Phương thức hoàn</dt><dd>{{ $method($refund->method) }}</dd>
+            <dt>Lý do</dt><dd>{{ $refund->reason }}</dd>
+            <dt>Số tiền hoàn</dt><dd>{{ $money($refund->amount) }}</dd>
+        </dl>
     @endisset
 </main>
 </body>

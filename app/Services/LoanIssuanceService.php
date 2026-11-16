@@ -61,7 +61,7 @@ class LoanIssuanceService
                     return $existingLoan->load(['reader:id,name,email', 'items.book:id,title,book_code', 'deposit']);
                 }
             }
-            $reader = User::query()->whereKey($readerId)->lockForUpdate()->first();
+            $reader = User::query()->withTrashed()->whereKey($readerId)->lockForUpdate()->first();
             $reservation = null;
             $snapshotItems = [];
             if ($reservationId !== null) {
@@ -103,7 +103,7 @@ class LoanIssuanceService
                 $items = [['book_id' => $reservation->book_id, 'quantity' => $reservation->quantity]];
             }
 
-            if (! $reader || $reader->role !== 'Độc giả' || $reader->is_locked) {
+            if (! $reader || $reader->trashed() || $reader->role !== 'Độc giả' || $reader->is_locked) {
                 throw ValidationException::withMessages(['reader_id' => 'Chọn độc giả đang hoạt động để phát phiếu.']);
             }
 

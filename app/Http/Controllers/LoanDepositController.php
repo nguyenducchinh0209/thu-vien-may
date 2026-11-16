@@ -96,10 +96,15 @@ class LoanDepositController extends Controller
                     'deposit_amount' => LibraryMoney::decimal($fromDeposit),
                     'additional_amount' => LibraryMoney::decimal($fromAdditional),
                 ]);
+                $receiptPrefix = 'Đối soát cọc phiếu mượn #'.$loan->id;
+                $receiptNote = $data['receipt_note'] ?? null;
+                $paymentNote = $receiptNote
+                    ? $receiptPrefix.': '.mb_substr($receiptNote, 0, 500 - mb_strlen($receiptPrefix) - 2)
+                    : $receiptPrefix;
                 $fine->payments()->create([
                     'received_by' => $request->user()->id, 'amount' => LibraryMoney::decimal($fineCentsForRow),
                     'method' => $fromAdditional > 0 ? $data['additional_method'] : 'manual',
-                    'receipt_note' => 'Đối soát cọc phiếu mượn #'.$loan->id.(($data['receipt_note'] ?? null) ? ': '.$data['receipt_note'] : ''), 'paid_at' => now(),
+                    'receipt_note' => $paymentNote, 'paid_at' => now(),
                 ]);
                 $fine->update(['status' => 'paid', 'paid_by' => $request->user()->id, 'paid_at' => now()]);
             }

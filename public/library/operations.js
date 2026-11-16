@@ -37,7 +37,7 @@ function opView(key){
 }
 function opStaffPage(key){
   const role=window.libraryUser?.role;
-  return Boolean(opConfig[key])&&['Admin','Thủ thư'].includes(role)&&(!['accounts','authors'].includes(key)||role==='Admin');
+  return Boolean(opConfig[key])&&['Admin','Thủ thư'].includes(role)&&(key!=='accounts'||role==='Admin');
 }
 function opReset(){
   opViews.clear();
