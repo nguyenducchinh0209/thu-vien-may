@@ -35,4 +35,11 @@ return [
         ],
     ],
 
+    'ai' => [
+        'api_key' => env('GEMINI_API_KEY'),
+        'endpoint' => env('GEMINI_ENDPOINT', 'https://generativelanguage.googleapis.com/v1beta/models'),
+        'model' => env('GEMINI_MODEL', 'gemini-4-hydrogen'),
+        'timeout' => 20,
+    ],
+
 ];

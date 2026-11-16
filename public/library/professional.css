@@ -60,3 +60,4 @@ body{background:var(--pro-paper);color:var(--pro-ink)}
 .pro-home-category-section .pro-chips{flex-wrap:wrap}
 .pro-stats{display:none!important}
 @media(max-width:620px){.pro-hero+.pro-section{margin-top:26px}.pro-home-category-section .pro-chips{gap:7px}}
+.pro-book-price{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid #eef0ec;color:#89958c;font-size:10px}.pro-book-price strong{color:#345a43;font-size:13px;font-weight:700}.pro-book-price small{color:#89958c;font-size:9px;font-weight:500}

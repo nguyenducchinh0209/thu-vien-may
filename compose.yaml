@@ -1,0 +1,114 @@
+x-library-environment: &library-environment
+  APP_NAME: Thư viện Mây
+  APP_ENV: production
+  APP_LOCALE: vi
+  APP_KEY: ${APP_KEY:?Set an application key in .env.docker}
+  APP_DEBUG: "false"
+  APP_URL: ${APP_URL:-http://127.0.0.1:8080}
+  DB_CONNECTION: mysql
+  DB_HOST: db
+  DB_PORT: "3306"
+  DB_DATABASE: ${DB_DATABASE:-thu_vien_may}
+  DB_USERNAME: ${DB_USERNAME:-thu_vien_may}
+  DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.docker}
+  LOG_CHANNEL: stderr
+  SESSION_DRIVER: database
+  SESSION_COOKIE: thu_vien_may_docker_session
+  SESSION_SECURE_COOKIE: ${SESSION_SECURE_COOKIE:-false}
+  TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+  CACHE_STORE: database
+  QUEUE_CONNECTION: sync
+  MAIL_MAILER: ${MAIL_MAILER:-log}
+  MAIL_HOST: ${MAIL_HOST:-127.0.0.1}
+  MAIL_PORT: ${MAIL_PORT:-587}
+  MAIL_SCHEME: ${MAIL_SCHEME:-}
+  MAIL_USERNAME: ${MAIL_USERNAME:-}
+  MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+  MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-library@example.invalid}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-thu_vien_may}
+      MYSQL_USER: ${DB_USERNAME:-thu_vien_may}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.docker}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set a separate root password in .env.docker}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysql -h 127.0.0.1 -u \"$$MYSQL_USER\" \"$$MYSQL_DATABASE\" -e 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      start_period: 35s
+      retries: 20
+
+  migrate:
+    image: thu-vien-may-app:local
+    build: .
+    environment: *library-environment
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["runuser", "-u", "www-data", "--", "php", "artisan", "migrate", "--force", "--no-interaction"]
+    restart: "no"
+
+  web:
+    image: thu-vien-may-app:local
+    pull_policy: never
+    environment: *library-environment
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:80"
+    volumes:
+      - library-files:/var/www/html/storage/app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/ready"]
+      interval: 15s
+      timeout: 4s
+      retries: 6
+
+  scheduler:
+    image: thu-vien-may-app:local
+    pull_policy: never
+    environment: *library-environment
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - library-files:/var/www/html/storage/app
+    command: ["runuser", "-u", "www-data", "--", "php", "artisan", "schedule:work", "--no-interaction"]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: [https]
+    environment:
+      SITE_HOST: ${SITE_HOST:-localhost}
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+
+volumes:
+  mysql-data:
+  library-files:
+  caddy-data:
+  caddy-config:
