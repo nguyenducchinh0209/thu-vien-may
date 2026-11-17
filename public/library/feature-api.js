@@ -8,7 +8,7 @@
   function createLibraryFeatureApi(config = {}, transport = (...args) => fetch(...args)) {
     const capabilities = Object.freeze({membership:false, plans:false, payments:false, reservationWorkflow:false, chat:false, gender:false, ...config.capabilities});
     const endpoints = {membership:'/my/membership', plans:'/membership/plans', quote:'/my/payment-quotes', payments:'/my/payments', reservations:'/my/reservations', reservationCancellation:'/reservations', cartReservations:'/my/cart/reservations', staffReservations:'/staff/reservations', staffPayments:'/staff/payments', chat:'/support/chat', ...config.endpoints};
-    async function request(capability, endpoint, {method='GET', body, signal} = {}) {
+    async function request(capability, endpoint, {method='GET', body, signal, timeoutMs=20000} = {}) {
       if (!capabilities[capability]) throw new FeatureUnavailable();
       const url = new URL(endpoint, root.location.origin);
       if (url.origin !== root.location.origin) throw new Error('Địa chỉ dịch vụ không hợp lệ.');
@@ -20,7 +20,7 @@
       const controller = new AbortController();
       const abort = () => controller.abort();
       if (signal?.aborted) abort(); else signal?.addEventListener('abort', abort, {once:true});
-      const timeout = setTimeout(abort, 20000);
+      const timeout = setTimeout(abort, timeoutMs);
       try {
         const response = await transport(url.href, {method, headers, credentials:'same-origin', signal:controller.signal, body:body === undefined ? undefined : JSON.stringify(body)});
         const data = await response.json().catch(() => { throw new Error('Dịch vụ trả về dữ liệu không hợp lệ.'); });
@@ -54,7 +54,8 @@
       reservations: options => request('reservationWorkflow', endpoints.reservations, options),
       reservation: (id, options) => request('reservationWorkflow', `${endpoints.reservations}/${encodeURIComponent(id)}`, options),
       cancelReservation: (id, options={}) => request('reservationWorkflow', `${endpoints.reservationCancellation}/${encodeURIComponent(id)}`, {...options, method:'DELETE'}),
-      chat: (message, history, options={}) => request('chat', endpoints.chat, {...options, method:'POST', body:{message, history:history.slice(-8)}}),
+      // Laravel waits up to 20 seconds for Gemini before returning its error response.
+      chat: (message, history, options={}) => request('chat', endpoints.chat, {...options, method:'POST', timeoutMs:28000, body:{message, history:history.slice(-8)}}),
     });
   }
   // Never infer membership, payment success or eligibility from a missing field.

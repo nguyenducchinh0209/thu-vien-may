@@ -103,6 +103,15 @@ test('foreign endpoints, invalid JSON and server errors are surfaced',async()=>{
   const failed=harness({capabilities:{chat:true}},async()=>({ok:false,json:async()=>({message:'Busy'})}));
   await assert.rejects(failed.api.chat('hello',[]),/Busy/);
 });
+test('chat gives the Laravel gateway time to respond before aborting',async()=>{
+  const delays=[];
+  const {api,context}=harness({capabilities:{chat:true,plans:true}},async()=>response({}));
+  context.setTimeout=(_callback,delay)=>{delays.push(delay);return 1;};
+  context.clearTimeout=()=>{};
+  await api.chat('hello',[]);
+  await api.plans();
+  assert.deepEqual(delays,[28000,20000]);
+});
 test('reservation eligibility rejects missing payment state, expiry and all non-ready states',()=>{
   const {rules}=harness(),ready={status:'ready',expires_at:future(),payment_status:'unpaid'};
   assert.equal(rules.reservationPayable(ready),true);

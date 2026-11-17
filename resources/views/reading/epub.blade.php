@@ -44,7 +44,7 @@
         </details>
         @unless ($canReadFullBook)
             <p class="reader-preview">
-                Bạn đang đọc thử {{ $chapterLimit }} chương đầu.
+                Bạn đang đọc thử {{ $chapterLimit }} trong tổng số {{ $totalChapters }} chương.
                 <a href="{{ url('/') }}#vip">Xem gói VIP</a>
             </p>
         @endunless
@@ -69,11 +69,13 @@
                         <span aria-hidden="true">←</span> Chương trước
                     </a>
                 @endif
-                <span class="reader-chapter-count">Chương {{ $chapterNumber }} / {{ $chapterLimit }}</span>
+                <span class="reader-chapter-count">Chương {{ $chapterNumber }} / {{ $totalChapters }}</span>
                 @if ($chapterNumber < $chapterLimit)
                     <a class="reader-next" rel="next" href="{{ route('books.read', ['book' => $book, 'chapter' => $chapterNumber + 1]) }}">
                         Chương sau <span aria-hidden="true">→</span>
                     </a>
+                @elseif (!$canReadFullBook)
+                    <a class="reader-next" href="{{ url('/') }}#vip">Đọc tiếp với VIP <span aria-hidden="true">→</span></a>
                 @endif
             </nav>
         @endif

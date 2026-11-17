@@ -199,7 +199,7 @@ test('counter navigation is in the librarian menu and the payment link follows t
   assert.equal(link.hidden, true);
 });
 
-test('book detail links to the full EPUB only when available and explains server-checked reading access', () => {
+test('book detail groups its available preview and EPUB actions', () => {
   const start = professionalSource.indexOf('function proDetail(){');
   const end = professionalSource.indexOf('\nfunction proCart', start);
   assert.notEqual(start, -1);
@@ -207,7 +207,7 @@ test('book detail links to the full EPUB only when available and explains server
   const detailSource = professionalSource.slice(start, end);
   const context = vm.createContext({
     state: {bookId: 1, favorites: []},
-    proFindBook: id => ({id, title:'A Book', author:'An Author', category:'Fiction', description:'Description', has_epub:true, available_quantity:1}),
+    proFindBook: id => ({id, title:'A Book', author:'An Author', category:'Fiction', description:'Description', has_epub:true, preview_page_count:1, available_quantity:1}),
     proBooks: () => [],
     cover: () => '<div></div>',
     escapeHTML: value => String(value),
@@ -216,15 +216,20 @@ test('book detail links to the full EPUB only when available and explains server
   });
   vm.runInContext(`${detailSource}; globalThis.renderBookDetail = proDetail;`, context);
   let html = vm.runInContext('renderBookDetail()', context);
-  assert.match(html, /href="\/books\/1\/read"/);
-  assert.match(html, /Đọc EPUB/);
-  assert.doesNotMatch(html, /Đọc toàn bộ EPUB/);
-  assert.match(html, /Đọc EPUB miễn phí 3 chương đầu/);
-  assert.match(html, /Gói VIP đọc toàn bộ EPUB/);
-  assert.match(html, /quyền truy cập được máy chủ xác nhận/);
+  assert.match(html, /data-add-cart="1"/);
+  assert.match(html, /class="pro-reading-actions" role="group"/);
+  assert.match(html, /data-open-preview="1" aria-label="Xem ảnh giới thiệu \(1 trang\)">Xem ảnh<\/button>/);
+  assert.match(html, /href="\/books\/1\/read">Đọc EPUB<\/a>/);
+  assert.doesNotMatch(html, /pro-detail-policies/);
 
-  context.proFindBook = id => ({id, title:'A Book', author:'An Author', category:'Fiction', description:'Description', has_epub:false, available_quantity:1});
+  context.proFindBook = id => ({id, title:'A Book', author:'An Author', category:'Fiction', description:'Description', has_epub:false, preview_page_count:1, available_quantity:1});
   html = vm.runInContext('renderBookDetail()', context);
   assert.match(html, /Chưa có EPUB/);
+  assert.match(html, /data-open-preview="1"/);
   assert.doesNotMatch(html, /href="\/books\/1\/read"/);
+
+  context.proFindBook = id => ({id, title:'A Book', author:'An Author', category:'Fiction', has_epub:true, preview_page_count:0, type:'Đọc online'});
+  html = vm.runInContext('renderBookDetail()', context);
+  assert.match(html, /href="\/books\/1\/read">Đọc EPUB<\/a>/);
+  assert.doesNotMatch(html, /data-open-preview|data-add-cart|Chưa có EPUB/);
 });

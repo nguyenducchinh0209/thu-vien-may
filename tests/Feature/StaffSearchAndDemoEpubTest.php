@@ -47,11 +47,18 @@ class StaffSearchAndDemoEpubTest extends TestCase
         $reader = User::factory()->create(['role' => 'Độc giả']);
         $path = '/books/'.$book->id.'/read';
 
-        $this->actingAs($reader)->get($path.'?chapter=3')->assertOk()->assertSee('Ba phút trước giờ đóng cửa');
+        $this->actingAs($reader)->get($path.'?chapter=3')->assertOk()
+            ->assertSee('Ba phút trước giờ đóng cửa')
+            ->assertSeeText('Bạn đang đọc thử 3 trong tổng số 5 chương.')
+            ->assertSeeText('Chương 3 / 5')
+            ->assertSeeText('Đọc tiếp với VIP');
         $this->get($path.'?chapter=4')->assertForbidden();
         $this->getJson('/my/reading-books')->assertOk()->assertJsonPath('data.0.last_chapter', 3);
         Membership::create(['user_id'=>$reader->id, 'tier'=>'vip', 'status'=>'active', 'starts_at'=>now(), 'expires_at'=>now()->addDays(2)]);
-        $this->get($path.'?chapter=5')->assertOk()->assertSee('Một chỗ cho câu chuyện tiếp theo');
+        $this->get($path.'?chapter=5')->assertOk()
+            ->assertSee('Một chỗ cho câu chuyện tiếp theo')
+            ->assertSeeText('Chương 5 / 5')
+            ->assertDontSeeText('Đọc tiếp với VIP');
         $this->getJson('/my/reading-books')->assertOk()->assertJsonPath('data.0.last_chapter', 5);
     }
 }

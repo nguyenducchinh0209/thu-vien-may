@@ -37,7 +37,8 @@ class EpubReadingController extends Controller
         abort_unless($isStaff || $isVip || $epub['previewAvailable'], 403, 'Free preview is unavailable because this EPUB does not identify one chapter per XHTML document in its table of contents.');
 
         $chapters = $epub['chapters'];
-        $chapterLimit = ($isStaff || $isVip) ? count($chapters) : min(3, count($chapters));
+        $totalChapters = count($chapters);
+        $chapterLimit = ($isStaff || $isVip) ? $totalChapters : min(3, $totalChapters);
         $chapterNumber = $request->integer('chapter', 1);
 
         abort_unless($chapterNumber >= 1 && $chapterNumber <= $chapterLimit, 403);
@@ -54,7 +55,8 @@ class EpubReadingController extends Controller
             'chapter' => $chapters[$chapterNumber - 1],
             'chapterNumber' => $chapterNumber,
             'chapterLimit' => $chapterLimit,
-            'canReadFullBook' => $chapterLimit === count($chapters),
+            'totalChapters' => $totalChapters,
+            'canReadFullBook' => $chapterLimit === $totalChapters,
             'previewAvailable' => $epub['previewAvailable'],
         ]);
     }
